@@ -11,6 +11,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 
+#[derive(Clone, Copy)]
 pub struct Slot {
     pub offset: u32, // record offset in the GPU instance buffer
     pub count: u32,
@@ -72,7 +73,18 @@ impl ResidentSet {
     /// that thrashes (everything evicted before its replacement arrives and
     /// the drawn set collapses to 0). Oversubscription is resolved by leaving
     /// the tail of the stable (leaf-id) order unloaded until capacity frees.
-    pub fn reconcile(&mut self, desired: &[u32], leaf_counts: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    ///
+    /// Session 003 fix: returns the EVICTED LEAVES WITH THEIR SLOTS so the
+    /// caller can release the GPU ranges. Previously reconcile removed the
+    /// residents internally and discarded the Slots; the caller's second
+    /// remove() then returned None and release() never ran — every eviction
+    /// leaked its slot range until the free list was exhausted (fly-test
+    /// settle: alloc-fail → re-request thrash, pending never drained).
+    pub fn reconcile(
+        &mut self,
+        desired: &[u32],
+        leaf_counts: &[u32],
+    ) -> (Vec<(u32, Slot)>, Vec<u32>) {
         let want: std::collections::HashSet<u32> = desired.iter().copied().collect();
         let mut evict = Vec::new();
         for &l in self.lru.iter() {
@@ -80,8 +92,11 @@ impl ResidentSet {
                 evict.push(l);
             }
         }
+        let mut evicted = Vec::with_capacity(evict.len());
         for &l in &evict {
-            self.remove(l);
+            if let Some(s) = self.remove(l) {
+                evicted.push((l, s));
+            }
         }
         let mut free = self.capacity.saturating_sub(self.total_stars);
         let mut load = Vec::new();
@@ -96,7 +111,7 @@ impl ResidentSet {
                 load.push(l);
             }
         }
-        (evict, load)
+        (evicted, load)
     }
 
     pub fn resident_leaves(&self) -> usize {

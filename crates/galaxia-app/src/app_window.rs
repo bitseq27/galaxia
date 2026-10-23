@@ -453,8 +453,8 @@ impl App {
                         s.resident_stars, s.drawn
                     ));
                     ui.monospace(format!(
-                        "pending {} · loads {} · evictions {}",
-                        s.pending, s.loads, s.evictions
+                        "pending {} · deferred {} · loads {} · evictions {}",
+                        s.pending, s.deferred, s.loads, s.evictions
                     ));
                     ui.monospace(format!("streamed {:.1} MB", s.mb_streamed));
                 }

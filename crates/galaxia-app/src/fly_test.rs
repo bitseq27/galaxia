@@ -30,7 +30,7 @@ use std::time::Instant;
 pub const FOV_Y_RAD: f32 = 60f32.to_radians();
 const NEAR_PC: f32 = 1e-5;
 const CSV_PATH: &str = "docs/build/flytest.csv";
-const CSV_HEADER: &str = "frame,phase,t_s,dist_pc,desired_leaves,resident_leaves,resident_stars,pending,loads,evictions,mb_streamed,stream_mbps,drawn,frame_ms";
+const CSV_HEADER: &str = "frame,phase,t_s,dist_pc,desired_leaves,resident_leaves,resident_stars,pending,loads,evictions,mb_streamed,stream_mbps,drawn,frame_ms,deferred";
 /// G2 budget: pending must drain this fast after the camera stops (PLAN It.1).
 const SETTLE_BUDGET_S: f64 = 2.0;
 /// Hard cap on the settle phase so a broken worker can't hang the harness.
@@ -121,7 +121,11 @@ pub async fn run(cli: &Cli) -> Result<()> {
 
     loop {
         let now = t_start.elapsed().as_secs_f64();
-        let dt = last.elapsed().as_secs_f64().clamp(1e-4, 0.5);
+        // Wall-speed fidelity: llvmpipe frames can take ~0.85 s; clamping dt
+        // to 0.5 silently throttled the camera to ~29 pc/s on a 50 pc/s gate
+        // run (first s003 attempt flew 1747 pc in 60 s). The gate demands the
+        // camera actually travels pc_s × wall time; 2 s cap is sanity only.
+        let dt = last.elapsed().as_secs_f64().clamp(1e-4, 2.0);
         last = Instant::now();
         let frame_t0 = Instant::now();
 
@@ -234,7 +238,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
         prev_t = now;
         writeln!(
             csv,
-            "{frame},{phase},{now:.3},{dist:.2},{dl},{rl},{rs},{p},{l},{e},{mb:.2},{mbps:.2},{d},{fms:.1}",
+            "{frame},{phase},{now:.3},{dist:.2},{dl},{rl},{rs},{p},{l},{e},{mb:.2},{mbps:.2},{d},{fms:.1},{df}",
             dl = stats.desired_leaves,
             rl = stats.resident_leaves,
             rs = stats.resident_stars,
@@ -243,6 +247,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             e = stats.evictions,
             d = stats.drawn,
             fms = frame_t0.elapsed().as_secs_f64() * 1e3,
+            df = stats.deferred,
         )?;
 
         // ── gate bookkeeping + phase transitions ─────────────────────────
@@ -302,6 +307,10 @@ pub async fn run(cli: &Cli) -> Result<()> {
         settle_s
             .map(|s| format!("{s:.3}"))
             .unwrap_or_else(|| "NEVER".into()),
+    );
+    println!(
+        "FLYTEST dist_expected_pc={:.0} dist_flown_pc={dist_pc:.0} (dt-clamp fidelity check)",
+        fly_secs * pc_s
     );
     let g1_msg = if g1 {
         "PASS".to_string()

@@ -17,6 +17,7 @@ pub fn camera_for_scene(scene: &str) -> Camera {
     match scene {
         // Orion cone centre (PLAN §16.2): RA 83.82°, Dec −5.39°.
         "orion_wide" => cam.look_at_equatorial(83.82, -5.39),
+        "t0_orion_m13" => cam.look_at_equatorial(83.82, -5.39),
         "orion_belt" => cam.look_at_equatorial(84.053, -1.202),   // Alnilam
         "betelgeuse" => cam.look_at_equatorial(88.793, 7.407),
         "pleiades" => cam.look_at_equatorial(56.75, 24.12),
