@@ -1,0 +1,8 @@
+{
+ "sample": "6cf2baf2-cf04-11f1-9d98-bc97e148b76b-O",
+ "query": "SELECT phot_g_mean_mag, parallax FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 20.0)) = 1 AND phot_g_mean_mag < 20 AND MOD(random_index, 400) = 0",
+ "sample_mod": 400,
+ "submitted": "2026-10-23T17:08:54Z",
+ "finished": "2026-10-23T17:09:19Z",
+ "sampled_rows": 38863
+}

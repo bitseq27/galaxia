@@ -202,6 +202,13 @@ def main():
             raise RuntimeError(
                 f"[{key}] {n_lines} rows for one nside=32 pixel — polygon winding "
                 f"likely inverted (expected ~70-90k); aborting before baking")
+        # s005: the archive caps TAP results at 50k rows SILENTLY (sync+async).
+        # A partition landing on the cap is INCOMPLETE — flag it in the
+        # manifest; the real fix (sub-partitioned re-fetch) is session 006.
+        truncated = n_lines >= 49_999
+        if truncated:
+            log(f"[{key}] WARNING: hit the 50k archive result cap — partition "
+                f"INCOMPLETE (fetched {n_lines}; re-fetch needs sub-partitioning)")
         rec, n, skipped = quantise_csv(raw)
         with open(baked, "wb") as fh:
             fh.write(rec)
@@ -214,6 +221,8 @@ def main():
             "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "seconds": round(time.time() - t0, 1),
         }
+        if truncated:
+            manifest["partitions"][key]["truncated_at_cap"] = True
         json.dump(manifest, open(MANIFEST, "w"), indent=1)
         log(f"[{key}] {mirror} rows={n} skipped={skipped} baked={len(rec)}B "
             f"raw_deleted dt={time.time()-t0:.0f}s")
