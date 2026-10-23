@@ -48,5 +48,33 @@
   "submitted": "2026-10-23T18:33:51Z",
   "value": 82,
   "phase": "COMPLETED"
+ },
+ "spot_box_d21bbbba": {
+  "jid": "3c2cc4aa-cf25-11f1-9d98-bc97e148b76b-O",
+  "query": "SELECT COUNT(*) FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 20.0)) = 1 AND dec >= -6.000000 AND dec < -5.000000 AND ra >= 101.442276 AND ra < 102.701010 AND phot_g_mean_mag < 20.0",
+  "submitted": "2026-10-23T21:03:46Z",
+  "value": 49921,
+  "phase": "COMPLETED"
+ },
+ "spot_box_d20bbbab": {
+  "jid": "3d5c1cf6-cf25-11f1-9d98-bc97e148b76b-O",
+  "query": "SELECT COUNT(*) FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 20.0)) = 1 AND dec >= -7.000000 AND dec < -6.000000 AND ra >= 100.184545 AND ra < 101.443356 AND phot_g_mean_mag < 20.0",
+  "submitted": "2026-10-23T21:03:48Z",
+  "value": 49844,
+  "phase": "COMPLETED"
+ },
+ "spot_box_d40ab": {
+  "jid": "3e74b8f2-cf25-11f1-9d98-bc97e148b76b-O",
+  "query": "SELECT COUNT(*) FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 20.0)) = 1 AND dec >= 13.000000 AND dec < 14.000000 AND ra >= 79.838117 AND ra < 83.820000 AND phot_g_mean_mag < 20.0",
+  "submitted": "2026-10-23T21:03:50Z",
+  "value": 49835,
+  "phase": "COMPLETED"
+ },
+ "spot_box_d35aa": {
+  "jid": "3f9655a4-cf25-11f1-9d98-bc97e148b76b-O",
+  "query": "SELECT COUNT(*) FROM gaiadr3.gaia_source WHERE CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 20.0)) = 1 AND dec >= 8.000000 AND dec < 9.000000 AND ra >= 68.875828 AND ra < 76.347914 AND phot_g_mean_mag < 20.0",
+  "submitted": "2026-10-23T21:03:52Z",
+  "value": 49580,
+  "phase": "COMPLETED"
  }
 }

@@ -54,6 +54,10 @@ from fetch_orion import (CONE_RA, CONE_DEC, CONE_R, COLUMNS, RAW, BAKE,
 
 MANIFEST = os.path.join(REPORTS, "fetch_manifest.json")
 COUNT_FILE = os.path.join(REPORTS, "day0_orion_count.txt")
+# Concatenated bins of SUBDIVIDED regions live out of the top-level glob so the
+# octree baker (which consumes every top-level *.bin) never double-counts a
+# parent together with its children.
+INTERNAL_DIR = os.path.join(BAKE, "internal")
 DEC_START = math.floor(CONE_DEC - CONE_R) - 1.0   # -26.0 with margin
 DEC_END = math.ceil(CONE_DEC + CONE_R) + 1.0      # +15.0 with margin
 DEC_BAND = 1.0
@@ -120,12 +124,14 @@ def fetch_region(path, dec_lo, dec_hi, ra_lo, ra_hi, gmax, manifest, deadline):
     """Fetch one box (recursively subdividing at the cap). Returns (rec, rows,
     skipped, entry). Leaf results land in etl/build/box_<path>.bin + manifest."""
     key = f"box_{path}"
-    binp = os.path.join(BAKE, f"{key}.bin")
     reg = manifest["regions"].get(key)
-    if reg and os.path.exists(binp):
-        with open(binp, "rb") as fh:
-            rec = fh.read()
-        return rec, reg["rows"], reg["skipped"], reg
+    if reg:
+        binp = os.path.join(INTERNAL_DIR if reg.get("sub_partitioned") else BAKE,
+                            f"{key}.bin")
+        if os.path.exists(binp):
+            with open(binp, "rb") as fh:
+                rec = fh.read()
+            return rec, reg["rows"], reg["skipped"], reg
 
     if deadline and time.time() > deadline:
         raise Deadline()
@@ -193,6 +199,10 @@ def fetch_region(path, dec_lo, dec_hi, ra_lo, ra_hi, gmax, manifest, deadline):
     assert len(rec) == entry["rows"] * 32, f"[{key}] rows*32 != bytes"
     entry["baked_bytes"] = len(rec)
     entry["baked_sha256"] = hashlib.sha256(rec).hexdigest()
+    binp = os.path.join(INTERNAL_DIR if entry["sub_partitioned"] else BAKE,
+                        f"{key}.bin")
+    if entry["sub_partitioned"]:
+        os.makedirs(INTERNAL_DIR, exist_ok=True)
     with open(binp, "wb") as fh:
         fh.write(rec)
     manifest["regions"][key] = entry
