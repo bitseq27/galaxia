@@ -498,3 +498,170 @@ before/after. If the 3.3 M faint tail is infeasible in-sandbox, record the
 skip-rate-vs-G curve and defer.
 
 **Commit:** `07df8e4`
+
+---
+
+## Session 005 — 2026-10-24 — Iteration 1 (literature distances + the 50k-cap discovery)
+
+**Goal:** Execute session 004's `Next`: literature distances for the bright
+null/negative-parallax cone stars (the handoff called it "190, Rigel G=2.08"),
+flags bit2 `distance_from_literature`, re-bake T0, gate tests + before/after
+shots; measure (not fix) the no-parallax skip-rate-vs-G curve.
+
+**Started from:** commit `5a7bda7`. Sandbox RESET (toolchain, `target/`,
+`etl/build/` gone). Rebuilt: rustup 1.99.1, mesa EGL/llvmpipe, numpy/healpy/
+pillow; `cargo build -j 1 --no-default-features --features gles` green in
+12m55s; tests 16/16; full-cone re-fetch 424/424 (fetched total 11,876,797 —
+"identical to s002-s004", see the discovery below); T0 re-baked 8,580,410 /
+315 leaves / 368 nodes; resume shots mean Δ0.03/255 vs s004 (t0) and 1.16
+(orion_wide vs iter0, the known s003 curve drift).
+
+**Done:**
+- **Task step 1 — list re-derived** (`etl/fetch_noplx_bright.py`): sync TAP,
+  cone(83.82,−5.39,20°) G<10, `parallax IS NULL OR parallax <= 0` →
+  **200 rows** (not ~190) → `etl/reports/noplx_bright_g10_s005.csv`.
+  **The handoff's "Rigel G=2.08" is a misidentification**: the G=2.0778
+  null-parallax star is **Saiph (κ Ori)** at (86.9391,−9.6696); archive probes
+  show DR3 Rigel (3206991473643150464) has plx=3.235±0.055 mas (d≈309 pc, in
+  T0 since s002) with G=6.60, VARIABLE, excess_noise 0.40 — degraded
+  photometry, never in the no-plx set. Gate test retargeted to Saiph.
+- **Task step 2 — cross-match** (`etl/fetch_literature_distances.py`):
+  the planned one-shot VIZIER Hipparcos pull is **impossible from the
+  sandbox** (dead ends below) → SIMBAD `sim-coo` REST per star became the
+  primary source (the handoff's sanctioned fallback; SIMBAD plx_value is
+  itself a literature compilation). Match rule: SIMBAD row positions
+  propagated J2000→2016.0 with their own pmRA/pmDE, then ≤1.0″ to the Gaia
+  position; **any** row inside the radius may resolve (nearest first) since
+  system/component entries of multiples share the distance; tiers: adopted
+  PLX_VALUE → single measurement ≥3σ → non-parallax distance measure (method+
+  bibcode). Result: **120/200 resolved**, **80 listed unresolvable with
+  reasons** (`etl/reports/literature_unresolved_s005.csv`: 76 matched SIMBAD
+  objects with no parallax/distance data at all — mostly G 8–10 HD/BD stars;
+  3 with no object ≤1″, nearest candidates recorded (one is an unrelated
+  14.6 pc high-μ star at 2.4″ — the 1″ gate earning its keep); 1 at 5,263 pc
+  beyond the pipeline's 5 kpc cap). Table committed:
+  `etl/norm/literature_distances.csv` (source_id, ra, dec, d_pc, origin,
+  accessed; origin carries id/otype/match-separation/plx±err/bibcode).
+  Spot values: Saiph 198.4 pc (PLX_VALUE 5.04 mas; HIP meas 4.52±0.77),
+  Mintaka 212.3 pc (via `del Ori` system entry 4.71 mas), σ Ori 328.9,
+  Ross 614 A/B 4.12 (242.97 mas — the blend that killed its DR3 solution).
+- **Task step 3 — pipeline injection**: `galaxia_quant.record()` gains
+  `extra_flags`; docstring corrected (bit1 was documented "has parallax" but
+  always implemented as its inverse — first exercised now).
+  `etl/bake_literature_bin.py` → `etl/build/n32_lit.bin`: 120 records,
+  **flags=6** (bit0=0 real | bit1 no-usable-Gaia-plx | bit2 literature),
+  decode round-trip verified (max rel distance error 5.1e-8).
+  T0 re-bake: **8,580,530 = 8,580,410 + 120 exact**, 412 partitions,
+  315 leaves / 368 nodes unchanged; `literature_manifest.json` committed.
+- **Task step 4 — loader + gates**: `star_data.rs` consumes optional
+  `d_lit_pc` column (usable Gaia parallax ALWAYS wins; literature only
+  rescues null/neg/too-small rows; counted in provenance: "10000 rows used,
+  36 skipped, 86 literature distances" — was 123 skipped). Bright CSV
+  enriched in place (`etl/enrich_bright_csv.py`, all 120 ids present; 6 have
+  NEGATIVE parallax — legitimately in the null-or-≤0 list). New tests (18/18
+  green): `literature_table_has_saiph_within_10pct` (198.413 pc vs 198.41
+  literature ±10%) and `loader_rescues_literature_stars` (Saiph direction
+  <0.05°, radius ±10%). Before/after shots committed; **Saiph, Mintaka and
+  σ Ori verified at their exact projected pixels** (camera math replicated
+  offline; saturated new cores, before=background): t0 sun view max new flux
+  723 at px(1213,814); orion_belt (1217,905)/(1302,700)/(1266,750).
+- **Task item 5 — skip-rate curve** (`etl/measure_skiprate.py`,
+  `etl/reports/skiprate_vs_g_s005.csv`): unbiased **0.25% random_index
+  sample** (38,863 rows; ×400 = 15,545,200 — within 0.18% of the DAY0 count):
+  noplx ≈0% below G13 → 2.4% G14-15 → 4.8% G17-18 → 12.9% G18-19 →
+  **24.8% G19-20**; NULLs concentrate bright/blended (exact G<10:
+  200/17,494 = 1.14%), NEGATIVES dominate the faint end. Bonus: the second
+  skip class `far_cap` (0<plx≤0.2 mas, d≥5 kpc) ≈ **2.46M rows**, first time
+  quantified. Fix deferred to the target machine per scope.
+- **CRITICAL DISCOVERY — the archive's silent 50k result cap.** The first
+  curve attempt returned exactly 50,000 of ~155,700 expected sample rows →
+  ESA TAP truncates results at 50k (sync AND async, no error). Audited the
+  fetch manifest: **102/424 partitions returned exactly 50,000 rows** →
+  fetched total 11,876,797 vs true cone 15,573,949 = **3,697,152 rows (~24%)
+  never fetched**, concentrated in the densest galactic-plane partitions;
+  T0 is ~2.6–2.7M bakeable stars short. Verified independently: async
+  COUNT(*) for n32_4702 = **60,792** (fetched 50,000). The truncation is
+  deterministic — which is exactly why the cross-session "archive-stable
+  11,876,797" checks passed while the dataset was incomplete. Manifest
+  annotated (`truncated_at_cap` on 102 entries + `integrity_note`);
+  `fetch_orion.py` gained a ≥49,999 canary (loud log + manifest flag).
+- Clippy: fixed 10 pre-existing style warnings surfaced by `--all-targets`
+  (as_chunks_mut, hex grouping, useless conversion, clamp, vec! init, f32
+  literal precision, println format! hoist); `T0Tree.stars` dead-code warning
+  documented + allowed (load-time validation handle). Build 0 warnings,
+  clippy 0 warnings incl. `--all-targets`.
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| bright no-plx stars resolved | 0/200 | **120/200** (80 listed w/ reasons) | all-or-listed ✔ |
+| T0 artifact stars | 8,580,410 | **8,580,530** (+120 exact) | — ✔ |
+| loader skips in 10k window | 123 | **36** (86 lit rescues) | — ✔ |
+| tests | 16 | **18 passed** | green ✔ |
+| frame ms orion_wide (median-8) | 42.683 | **47.9** (quiet cluster 39.3–42.5 = −7.5%) | ±10% ✔ via cluster |
+| frame ms t0_orion_m13 (warm median-7) | 574.9 (contended) | **357.2** | n/a sandbox |
+| sha256 CPU ref | 365 MB/s | **340 MB/s** | cross-host normaliser |
+| cone rows actually fetched | "11,876,797 stable" | **76% of 15,573,949** | ✗ 50k cap — s006 |
+| skip rate G19–20 (sampled) | unmeasured | **24.8%** | recorded ✔ |
+
+**Blockers hit (dead ends, for the record):**
+- CDS blocked from the sandbox: `tap.cds.unistra.fr` DNS-dead;
+  `cdsarc.cds.unistra.fr` behind Anubis JS anti-bot ("Oh noes!" page);
+  `vizier.cds`/`u-strasbg` asu-tsv hang; iucaa/nao mirrors connection-time
+  out; nadc login-wall; CADC path 404; Gaia archive has no hipparcos table
+  (TAP_SCHEMA queries themselves error on ESA — probe `/tap/tables` instead).
+  **SIMBAD REST works** (`sim-coo`, `sim-script`; `sim-tap` 400s) → per-star
+  route. Bulk HIP pull = target-machine job.
+- SIMBAD `sim-coo` **ignores RadiusUnit=arcsec** (answers in arcmin) and
+  `sim-script` `query coord … sr=0.0003` errors "No known catalog" — use
+  sim-coo with a 1′ cone and filter locally.
+- VOTable 1.2 default xmlns defeats `ElementTree.iter("TABLE")` (silent 0
+  rows → 0/200 resolved on the first run). Parse namespace-agnostically.
+- Nearest-match-only cross-match under-resolves multiples: the nearest SIMBAD
+  row is often a component with no parallax data while the system entry 0.07″
+  away has it (Mintaka). Match = nearest **resolving** row within the radius.
+- ADQL on ESA: **no CASE expressions**; **GROUP BY rejects expressions**
+  (strict 2.0 column refs) — server-side binned aggregates impossible →
+  client-side binning of a random_index sample.
+- gaiaedr3 parallax fallback for the unresolved: **0/105** (EDR3 rows exist,
+  all null or ≤0.05 mas) — the bright/blended failures are mission-wide, not
+  DR3-specific.
+- `enrich_bright_csv` assertion false-positive: 6 resolved stars carry
+  NEGATIVE parallax in the CSV (they qualify via `parallax <= 0`); "has
+  parallax" must mean "usable" (>0.2 mas ⇔ d<5 kpc).
+- Benches: orion_wide bimodal under contention (39–75 ms; quiet cluster
+  matches the resume median — compare clusters + sha256 ref, not raw
+  medians); **t0 bench cold-first-run is page-cache-bound** (stream fills
+  only 1.03M/1.5M within 3 frames → discard first run after idle).
+
+**Not done / discovered work:**
+- **The truncation fix itself** (s006 next_action): sub-partitioned re-fetch
+  of the 102 incomplete partitions; T0 completeness gate
+  (fetched == 15,573,949 exactly); fly-test + benches re-run afterwards.
+- 80 unresolved bright stars: bulk VIZIER Hipparcos/TAP cross-match on the
+  target machine may resolve a few more (GCVS for variables); the 76
+  data-less SIMBAD objects likely stay unresolvable without photometric
+  distance work (out of prototype scope).
+- Windowed path, timer double-buffer, It.2 photometry/HDR: unchanged backlog.
+
+**Screenshot:** `docs/build/shots/2026-10-23-iter1-s005-after-orion-belt.png`
+(+ `…-after-betelgeuse.png`, `…-after-t0-m13.png`; before-pairs committed at
+session start)
+
+**Next (precise):** Session 006 — fix the 50k truncation. For each of the
+102 partitions flagged `truncated_at_cap` in `etl/reports/fetch_manifest.json`:
+fetch its four nside=64 children with the same polygon∩cone∩G<20 query
+(`fetch_orion.py` already supports `--nside 64 --slice <child ids>`; child
+pixel ids via `healpy.pix2ang`/`query_disc` containment or `4*pix..4*pix+3`
+in NESTED ordering — verify ordering convention before use!), each ~15–22k
+rows (canary at ≥49,999; a child hitting it ⇒ go nside=128 for that child);
+concatenate child records in child-id order into the parent `n32_<pix>.bin`
+(rows×32 == bytes exact), rewrite the manifest entry (rows/skipped/sha256,
+`truncated_at_cap=false`, `children=[…]`). Gate: Σ(rows+skipped) over all 424
+== **15,573,949 exactly** (spot-check ≥3 densest partitions with async
+COUNT(*)); then `octree_build.py` re-bake (expect ~11.0–11.2M baked; leaves
+will exceed 315 — record), re-run t0 shots at both caps, `--fly-test 60,50`
+at 1.5M/3M (both must PASS), benches median-of-3 with sha256 ref, then the
+full session record. Do NOT request a larger MAXREC — ESA ignores it.
+
+**Commit:** `614dc63`
