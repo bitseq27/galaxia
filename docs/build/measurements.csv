@@ -1,2 +1,4 @@
 timestamp,session,iteration,commit,scene,stars_visible,star_raster_ms,volumetrics_ms,glare_ms,post_ms,frame_ms_total,fps,peak_vram_gb,resident_leaves,stream_mb_s,notes
 2026-10-23T09:36:12Z,001,0,654bad1,orion_wide,10000,,,,,41.192,24.3,,,,sandbox lavapipe software raster — NOT Titan RTX numbers; It.0 skeleton point stars
+2026-10-23T09:53:30Z,002,0,a1e3a5d,orion_wide,10000,,,,,60.375,16.6,,,,SANDBOX NOISE: bench ran concurrent with fetch download — invalidated, see session 002
+2026-10-23T09:53:30Z,002,0,a1e3a5d,orion_wide,10000,,,,,23.771,42.1,,,,quiet-machine median-of-3 {23.77 23.52 48.72}; prior 41.192 row was itself noisy — sandbox rule now: median of 3, no concurrent jobs
