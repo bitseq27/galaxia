@@ -1,6 +1,6 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
-updated: 2026-10-23T17:40:00+08:00
+updated: 2026-10-23T17:50:00+08:00
 session: 1
 commit: "869f9b9"
 iteration: 0
@@ -29,11 +29,11 @@ not_working:
   - "timer readback single-buffered: poll_results blocks (It.2 debt, see timing.rs)"
 
 next_action: |
-  Write etl/fetch_orion.py per templates/DAY0-orion-fetch.md §3 (streaming-partitioned,
-  HEALPix Nside=32, free-disk gate >=40 GB, resumable fetch_manifest.json, mirror
-  failover). Run a 5-partition smoke slice in the sandbox to prove the
-  fetch->process->delete-raw cycle under 9 GB disk. Do NOT start the full cone
-  download until the slice round-trips and the 32 B/star quantise stage exists.
+  Check etl/reports/fetch_manifest.json for the completed 424-partition Orion run
+  (relaunch `python3 etl/fetch_orion.py --min-free-gb 1` if it died with the sandbox).
+  Verify total rows/baked bytes, then start It.1: galaxia-data octree builder
+  (etl/build/*.bin -> Morton sort -> leaf packs ~1e5 stars/leaf) + Rust async loader
+  with LRU resident set (PLAN 16.4 It.1 gates).
 
 next_iteration: 1
 next_iteration_scope: |
@@ -70,6 +70,7 @@ environment:
 adrs:
   - "0004-orion-prototype-region"
   - "0010-sandbox-gles-build"
+  # session 001 addendum: fetcher proven, full cone run in flight
 
 datasets:
   gaia: { release: DR3, epoch: 2016.0, rows: 17494, accessed: "2026-10-23" }

@@ -161,3 +161,59 @@ slice round-trips and the quantise stage (32 B/star, PLAN §8.4) exists to consu
 **Commit:** `869f9b9`
 
 ---
+
+---
+
+## Session 001 addendum — 2026-10-23 — Iteration 0/1 boundary (DAY0 §3 fetcher)
+
+**Goal:** close the DAY0 §3 gap: streaming-partitioned Orion downloader, proven in the
+sandbox under the 9 GB disk envelope before anyone trusts it overnight on the target.
+
+**Started from:** commit `953205c` (session 001 recorded).
+
+**Done:**
+- `etl/fetch_orion.py`: HEALPix Nside=32 cone partitioning (424 pixels measured vs
+  500–550 estimated), per-pixel ADQL POLYGON (interpolated great-circle edges) ANDed
+  with the cone circle, free-disk gate, mirror failover (ESA→ARI→CDS→NADC), resumable
+  manifest, raw-deleted-after-bake (§8.4.1 rule 1), gzip-aware sync TAP.
+- `etl/galaxia_quant.py`: 32 B/star record v0 (xyz f32 pc, mag f32, rgb f32, flags u32;
+  bit0 provenance, bit1 has-parallax). Final §8.4 schema = It.1.
+- **Smoke slice PASSED** (5 partitions): 12,220 rows baked = rows×32 B exactly; raw CSV
+  deleted; manifest `etl/reports/fetch_manifest.json` records mirror/rows/sha256/timing.
+  Skip fraction ≈ 30 % at G<20 (null/negative parallaxes at the faint end) — expected,
+  counted, never invented.
+- Guard added: a partition returning > 400 k rows aborts (polygon-winding canary).
+- **Full 424-partition run launched unattended** at 09:41 UTC in the sandbox
+  (`--min-free-gb 1` override; target keeps the 40 GB gate). ~7 s/partition observed →
+  ≈ 50 min. Resumable: killed partitions simply re-run; manifest skips baked ones.
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| partition wall time (sync TAP, ESA) | — | **6–7 s** | n/a ✔ |
+| rows/partition (cone-interior pixel) | est 70–90 k | **15–24 k** | — (fainter than §16.2 guess) |
+| baked bytes vs rows×32 | — | **exact** | 32 B/star ✔ |
+| raw residency per partition | ~30 MB | **deleted in-process** | peak rule ✔ |
+
+**Blockers hit:**
+- healpy `boundaries()` returns (3, N) → transpose; `vec2ang` on single vectors returns
+  arrays → lon/lat computed by hand. Both one-line fixes, recorded so nobody re-debug.
+
+**Not done / discovered work:**
+- Interior-pixel row counts (15–24 k) are ~4× below the DAY0 estimate of 70–90 k,
+  consistent with the 15.57 M total; reinforces ADR-0004.
+- Sync TAP per partition is fine at Nside=32 but will not scale to all-sky tiers;
+  It.1 ETL moves to async jobs + parallel workers (DAY0 §3 notes).
+- Quantised v0 has no Morton order / LOD metadata — octree builder (It.1) consumes
+  these .bin partitions and emits the §8.4 artifact.
+
+**Screenshot:** n/a (data-path session; visual unchanged from
+`docs/build/shots/2026-10-23-iter0-orion-wide.png`).
+
+**Next (precise):** when `etl/reports/fetch_manifest.json` shows 424 partitions (or the
+run was killed: re-launch `python3 etl/fetch_orion.py --min-free-gb 1`), verify
+total_rows ≈ 15.57 M × (1 − skip) and total baked ≈ rows×32 B; then start It.1:
+`crates/galaxia-data` octree builder reading `etl/build/*.bin` → Morton sort →
+leaf packs (~10⁵ stars/leaf) → Rust async loader + LRU resident set (PLAN §16.4 It.1).
+
+**Commit:** `abdf5de`
