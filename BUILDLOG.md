@@ -305,3 +305,43 @@ no frame starves to 0 residents at 50 pc/s (It.1 streaming gate, sandbox-proxy
 form). Then wire the same stats into the windowed egui overlay.
 
 **Commit:** `ac0987d`
+
+---
+
+## Session 003 — 2026-10-23 — Iteration 1 (streaming gate: --fly-test) — IN PROGRESS
+
+**Goal:** Execute session 002's `Next`: `--fly-test SECONDS,PC_PER_S` streaming
+harness (It.1 sandbox-proxy gate) + windowed overlay stats; requires re-baking
+the T0 dataset (sandbox was reset; `etl/build/`, `etl/raw/` are gitignored).
+
+**Started from:** commit `470fc14` (session 002 recorded). Sandbox RESET since
+session 002: toolchain gone, T0 artifact gone. Resume protocol findings:
+
+- Environment rebuilt: rustup 1.99.1 stable (same as s002), mesa EGL/llvmpipe
+  (LLVM 15.0.6), numpy 2.4.6, healpy 1.20.1.
+- **apt mirror aliyun throttled again (~300 s stall) → deb.debian.org instant**
+  (2 s). Session 001's finding still true; the sandbox image ships the slow mirror.
+- **`cargo build` at default `-j 2` OOM-kills rustc on `naga`** (SIGKILL, 1 GB
+  RAM). `-j 1` builds green (~7 min chunked). New sandbox build rule: `-j 1`.
+  No swap possible (swapon EPERM in container).
+- Background processes DO NOT survive between tool calls in this sandbox →
+  all long jobs run as repeated `timeout 230 …` foreground chunks
+  (cargo/fetcher are both incremental/resumable, so chunking is safe).
+- Resume checks: tests 13/13 green; orion_wide renders (mean Δ 1.18/255 vs the
+  iter0 shot — expected: s002 changed the brightness curve, flux-proportional
+  no-floor; 1.2 % of pixels differ >8/255, all on stars).
+- **Bench drift investigated (10 % rule):** orion_wide median {38.9, 58.1} ms
+  vs 25.26 recorded. Cause = host contention, not code: tree identical to
+  `470fc14`, bimodal sample spread 37–72 ms, 6 % lifetime CPU-steal in
+  /proc/stat, sha256 CPU ref 365 MB/s (new environment reference — future
+  sessions: compare this before trusting any sandbox ms number).
+- Smoke re-fetch of pixel n32_4445: rows=0 skipped=1 — matches s002 manifest
+  (cone-edge sliver, 1 row, no usable parallax). Manifest total unchanged
+  (8,580,254) → fetcher+mirrors+quantiser verified end-to-end post-reset.
+
+**Done:** (updated as the session progresses)
+- Full-cone re-fetch running in resumable chunks (423 partitions, ~7 s each).
+
+**Next (precise):** see entry when finalised.
+
+**Commit:** (in-progress; pushed per change per operator instruction)
