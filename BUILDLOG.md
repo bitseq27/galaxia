@@ -217,3 +217,91 @@ total_rows ≈ 15.57 M × (1 − skip) and total baked ≈ rows×32 B; then star
 leaf packs (~10⁵ stars/leaf) → Rust async loader + LRU resident set (PLAN §16.4 It.1).
 
 **Commit:** `abdf5de`
+
+---
+
+## Session 002 — 2026-10-23 — Iteration 1 (real data: octree + streaming)
+
+**Goal:** Resume cleanly; finish the DAY0 full-cone fetch; build the T0 octree;
+get the Rust side streaming leaf payloads through a bounded resident set into
+the star pass — first multi-million-star frame.
+
+**Started from:** commit `a1e3a5d` (session 001 addendum; fetch at 14/424).
+
+**Done:**
+- Resume protocol executed: log/ADR/git read; build+test green; visual regression
+  vs last shot mean Δ 0.29/255; bench drift investigated (below).
+- **Full-cone fetch COMPLETE: 424/424 partitions, 8,580,254 rows baked (274.6 MB),
+  3,296,543 skipped** (null/negative parallax at G≳18 — DR3 faint end; the
+  Bailer-Jones gap from session 001, now quantified). rows×32 == baked bytes exact.
+- `etl/octree_build.py`: full-cone bake in **15 s** under 1 GB RAM (memmap input,
+  sliding two-level leaf cut, single stable argsort, chunked gather write).
+  Artifact: 8,580,254 stars → **315 leaves (≤96,957/leaf), 368 nodes**, 274.6 MB
+  stars.bin in Morton order; verified: recursive node counts == stars, leaf counts
+  == leaves.idx, contiguity, cap.
+- `crates/galaxia-data`: T0Tree (80 B node records resident; leaf payloads on disk),
+  frustum-sphere × physical-LOD cull (m_cam = G + 5·log10(D_cam/D_sun) ≤ m0),
+  ResidentSet (bounded LRU + slot alloc/coalesce), StreamWorker thread — the render
+  thread never touches disk.
+- App: `t0_*` scenes headless+windowed wiring, `--m0`, `--resident-cap`; StarPass
+  gains ensure_capacity/upload_at/draw_ranges (leaf slots); shader gains per-star
+  m0 gate + flux-proportional brightness (floor removed).
+- First It.1 frame: **2,999,923 stars drawn** from 118/315 resident leaves
+  (96.0 MB streamed) at 2560×1440 — `docs/build/shots/2026-10-23-iter1-t0-orion-m13.png`.
+  The diagonal missing wedge = capacity tail under the 3 M sandbox cap (leaf-id
+  admission order); disappears at caps ≥ dataset size. Distance-priority admission
+  is recorded work, not done.
+- Tests 13/13 (new: f32-pc quantisation ⇒ 0.012″ ≪ 1″ gate; frustum-plane sanity).
+  Clippy clean.
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| cone partitions baked | 14/424 | **424/424** | — ✔ |
+| stars in T0 artifact | 0 | **8,580,254** | ≥5 M visible (It.1 gate, target) ✔ artifact |
+| stars drawn (sandbox, cap 3 M) | 10,000 | **2,999,923** | — ✔ |
+| stream volume / loads | 0 | **96.0 MB / 118 leaves** | — |
+| frame ms t0_m13 (llvmpipe, median-3) | — | **224.6** | n/a on sandbox (Titan: It.2 gate 5.5 ms star pass) |
+| frame ms orion_wide (median-3) | 23.77 | **25.26** | +6 % — inside 10 % gate ✔ |
+| tests | 11 | **13 passed** | green ✔ |
+
+**Blockers hit (dead ends, for the record):**
+- Bench drift 41.2→60.4 ms tripped the 10 % rule: cause = benchmarking concurrently
+  with the fetch on 2 cores. New sandbox rule (in CONTRIBUTING): median-of-3, quiet
+  machine. The old 41.2 row was itself noisy.
+- `StreamWorker::drop` deadlocked: dropping a *clone* of the sender does not close
+  an mpsc channel; join() blocked forever after the first t0 screenshot. Fixed by
+  Option<Sender> + take() before join.
+- ResidentSet reconcile thrashed to **drawn=0** when Σdesired > cap (evicted desired
+  leaves to admit other desired leaves; nothing ever settled). Fixed: evict only
+  non-desired residents; fill leftover capacity in stable leaf-id order.
+- Octree leaf ids: raw mixed-depth Morton numeric order ≠ spatial interval order
+  (depth-1 code 1 sits spatially after depth-3 code 41) → ids must sort on
+  depth-aligned codes, else leaves.idx ranges scramble.
+- Node dict keyed by raw code collided root (0,d0) with octant 0 (0,d1) → keys are
+  (code, depth).
+- Two sandbox OOMs: (a) f64 temps + full sorted copy at 8.6 M stars; (b) counts_at
+  holding all 17 depth levels (~1 GB). Both fixed by the frugal rewrite.
+- Additive-blend brightness *floor* (0.15) turns ≥10⁵ overlapping stars into white
+  fog; flux-proportional brightness with no floor integrates faint stars into a
+  milky glow instead. HDR/tonemap (It.2) supersedes the curve entirely.
+
+**Not done / discovered work:**
+- Streaming-rate gate (50 pc/s fly-through) not yet tested — needs a camera path
+  harness (`--fly-test`, It.1 gate on target).
+- HYG named stars, <1″ vs Stellarium named-star check: target-machine work.
+- Distance-priority leaf admission (kill the capacity wedge at low caps).
+- Windowed t0 overlay stats wired but untested (no display here).
+- 3.3 M no-parallax stars excluded from T0 — Bailer-Jones/literature distances
+  remain the biggest data debt (session 001).
+
+**Screenshot:** `docs/build/shots/2026-10-23-iter1-t0-orion-m13.png`
+
+**Next (precise):** Add `--fly-test SECONDS,PC_PER_S` to galaxia-app: move the
+camera along +view at fixed speed for N frames, log per-frame
+(resident_stars, pending, loads, evictions, stream MB/s) to
+`docs/build/flytest.csv`; assert pending returns to 0 within 2 s of stopping and
+no frame starves to 0 residents at 50 pc/s (It.1 streaming gate, sandbox-proxy
+form). Then wire the same stats into the windowed egui overlay.
+
+**Commit:** `ac0987d`

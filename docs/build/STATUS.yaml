@@ -1,10 +1,10 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
 updated: 2026-10-23T17:50:00+08:00
-session: 1
-commit: "869f9b9"
-iteration: 0
-iteration_name: "walking skeleton"
+session: 2
+commit: "ac0987d"
+iteration: 1
+iteration_name: "real data (octree + streaming)"
 branch: main
 
 phase: prototype
@@ -20,6 +20,9 @@ working:
   - "egui debug overlay (windowed path): fps, per-pass ms, provenance, camera state"
   - "DAY0 data: smoke test OK, cone count 15,573,949, bright subset 17,494 rows committed"
   - "unit tests 11/11 green; clippy clean"
+  - "T0 octree artifact: 8,580,254 stars / 315 leaves / 368 nodes (etl/build/t0/)"
+  - "galaxia-data: octree loader + frustum&LOD cull + LRU resident set + stream thread"
+  - "t0 scenes draw 2,999,923 streamed stars at 1440p (sandbox cap 3M)"
 
 not_working:
   - "windowed mode UNTESTED (sandbox has no display); first target-machine run = integration"
@@ -29,11 +32,11 @@ not_working:
   - "timer readback single-buffered: poll_results blocks (It.2 debt, see timing.rs)"
 
 next_action: |
-  Check etl/reports/fetch_manifest.json for the completed 424-partition Orion run
-  (relaunch `python3 etl/fetch_orion.py --min-free-gb 1` if it died with the sandbox).
-  Verify total rows/baked bytes, then start It.1: galaxia-data octree builder
-  (etl/build/*.bin -> Morton sort -> leaf packs ~1e5 stars/leaf) + Rust async loader
-  with LRU resident set (PLAN 16.4 It.1 gates).
+  Add --fly-test SECONDS,PC_PER_S to galaxia-app: camera flies along +view at fixed
+  speed; log per-frame (resident_stars, pending, loads, evictions, stream MB/s) to
+  docs/build/flytest.csv; assert pending==0 within 2 s of stopping and no frame
+  starves to 0 residents at 50 pc/s (It.1 streaming gate, sandbox-proxy form).
+  Then mirror those stats into the windowed egui overlay.
 
 next_iteration: 1
 next_iteration_scope: |
@@ -51,11 +54,11 @@ measurements_latest:
   volumetrics_ms: null                  # budget 2.2 — It.4
   glare_ms: null                        # budget 1.5 — It.2
   fsr2_ms: null                         # budget 1.2 — It.2
-  frame_ms_orion_wide: 45.7             # CPU wall, sandbox llvmpipe 2560x1440 — NOT a Titan number
-  fps_orion_wide: 22                    # ditto (headless, 5-frame avg of last frame)
+  frame_ms_orion_wide: 25.26             # CPU wall, sandbox llvmpipe 2560x1440 — NOT a Titan number
+fps_orion_wide: 41                    # ditto (headless, 5-frame avg of last frame)
   peak_vram_gb: 0.0                     # llvmpipe: host RAM, unmeasured
   resident_leaves: 0
-  stream_mb_s: 0
+  stream_mb_s: 48   # 96 MB over ~2 s of load frames (sandbox disk cache)
   free_nvme_gb: 8                       # sandbox disk; target machine = 200 (HARD LIMIT)
 
 environment:
