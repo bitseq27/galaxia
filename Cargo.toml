@@ -45,6 +45,7 @@ debug = 1          # keep line info for profiling
 
 [profile.dev]
 opt-level = 1      # faster skeleton runs while iterating
+debug = 0          # sandbox has limited RAM — debuginfo=2 OOM-kills rustc on `ash`
 
 [profile.dev.package."*"]
-opt-level = 2      # deps optimised even in dev — wgpu/egui are unusable at opt 0
+opt-level = 1      # deps: 1 not 2 — memory ceiling in the build sandbox

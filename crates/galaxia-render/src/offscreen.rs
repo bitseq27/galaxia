@@ -70,7 +70,7 @@ impl OffscreenTarget {
         queue.submit([encoder.finish()]);
         let slice = self.read_buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None });
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let mut rgba = slice.get_mapped_range().to_vec();
         slice.unmap();
         // BGRA → RGBA

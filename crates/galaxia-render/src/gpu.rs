@@ -23,7 +23,7 @@ impl GpuContext {
         } else {
             wgpu::Backends::PRIMARY
         };
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
         });
@@ -50,6 +50,7 @@ impl GpuContext {
                 label: Some("galaxia-device"),
                 required_features: features,
                 required_limits: wgpu::Limits::default(),
+                experimental_features: Default::default(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
             })
