@@ -39,13 +39,10 @@ pub fn map_key_event(ev: &KeyEvent) -> Option<Action> {
                 return None;
             }
         }
-        PhysicalKey::Code(KeyCode::Backquote) => {
-            if down {
+        PhysicalKey::Code(KeyCode::Backquote)
+            if down => {
                 Action::ToggleOverlay
-            } else {
-                return None;
             }
-        }
         _ => return None,
     };
     Some(action)

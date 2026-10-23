@@ -15,7 +15,7 @@ struct FrameUniforms {
     cam_up: vec3<f32>,
     time_s: f32,
     exposure: f32,
-    _pad0: f32,
+    m0: f32,          // limiting magnitude (per-star exposure gate, It.1)
     _pad1: f32,
     _pad2: f32,
     _pad3: f32,
@@ -52,6 +52,12 @@ fn star_radius_px(mag: f32) -> f32 {
     return clamp(pow(10.0, -0.20 * (mag - 5.5)) * 2.2, 0.8, 48.0);
 }
 
+// Per-star exposure gate: stars fainter than the limiting magnitude collapse
+// to a zero-size, zero-brightness quad (node LOD alone cannot express m0).
+fn gated(mag: f32) -> f32 {
+    return select(0.0, 1.0, mag <= u.m0);
+}
+
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
     let s = stars[ii];
@@ -65,7 +71,8 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     let center_clip = u.view_proj * vec4(s.pos_pc, 1.0);
     let dist = max(center_clip.w, 1e-4);
 
-    let r_world = dist * star_radius_px(s.mag) * u.px_scale;
+    let gate = gated(s.mag);
+    let r_world = gate * dist * star_radius_px(s.mag) * u.px_scale;
     let world_offset = u.cam_right * (corner.x * r_world) + u.cam_up * (corner.y * r_world);
 
     var out: VsOut;
@@ -77,7 +84,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     // blending into white fog once >10^5 stars overlap (session 002 finding).
     // Faint stars contribute ~their flux; clusters of them integrate into a
     // milky glow instead of clipping. HDR + tonemap (It.2) replaces this curve.
-    out.bright = clamp(pow(10.0, -0.4 * (s.mag - 6.0)), 0.0, 14.0) * u.exposure;
+    out.bright = gate * clamp(pow(10.0, -0.4 * (s.mag - 6.0)), 0.0, 14.0) * u.exposure;
     return out;
 }
 

@@ -50,7 +50,7 @@ pub struct FrameUniforms {
     pub cam_up: [f32; 3],
     pub time_s: f32,
     pub exposure: f32,
-    pub _pad0: f32,
+    pub m0: f32,
     pub _pad1: f32,
     pub _pad2: f32,
     pub _pad3: f32,

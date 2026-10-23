@@ -59,6 +59,7 @@ struct App {
     reloads: u32,
     reload_errors: Vec<String>,
     frames: u64,
+    m0_uniform: f32,
 }
 
 impl App {
@@ -82,6 +83,7 @@ impl App {
         let timers = GpuTimers::new(&gpu.device, gpu.has_timestamps, graph.slot_count());
         let ts_period_ns = gpu.queue.get_timestamp_period();
 
+        let m0_uniform = if cli.scene.starts_with("t0") { cli.m0 } else { 99.0 };
         Ok(Self {
             camera: crate::headless::camera_for_scene(&cli.scene),
             cli,
@@ -111,6 +113,7 @@ impl App {
             reloads: 0,
             reload_errors: Vec::new(),
             frames: 0,
+            m0_uniform,
         })
     }
 
@@ -244,7 +247,7 @@ impl App {
             cam_up: up,
             time_s: frame_t0.elapsed().as_secs_f32(),
             exposure: self.cli.exposure,
-            _pad0: 0.0,
+            m0: self.m0_uniform,
             _pad1: 0.0,
             _pad2: 0.0,
             _pad3: 0.0,
@@ -424,12 +427,11 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.window.is_none() {
-            if let Err(e) = self.init_window(el) {
+        if self.window.is_none()
+            && let Err(e) = self.init_window(el) {
                 tracing::error!("window init failed: {e}");
                 el.exit();
             }
-        }
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, ev: WindowEvent) {
@@ -443,8 +445,8 @@ impl ApplicationHandler for App {
         match ev {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(size) => {
-                if size.width > 0 && size.height > 0 {
-                    if let (Some(surface), Some(mut config)) =
+                if size.width > 0 && size.height > 0
+                    && let (Some(surface), Some(mut config)) =
                         (self.surface.as_ref(), self.surface_config.clone())
                     {
                         config.width = size.width;
@@ -452,7 +454,6 @@ impl ApplicationHandler for App {
                         surface.configure(&self.gpu.device, &config);
                         self.surface_config = Some(config);
                     }
-                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some(a) = input::map_key_event(&event) {
@@ -470,7 +471,7 @@ impl ApplicationHandler for App {
                     let (x, y) = (position.x, position.y);
                     if let Some((px, py)) = self.last_cursor {
                         self.look_accum.0 += (x - px) * LOOK_SENS;
-                        self.look_accum.1 += (py - y) * LOOK_SENS * -1.0;
+                        self.look_accum.1 += -((py - y) * LOOK_SENS);
                     }
                     self.last_cursor = Some((x, y));
                 }

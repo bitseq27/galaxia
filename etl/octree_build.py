@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-"""etl/octree_build.py — T0 octree bake (PLAN §H2, §16.4 It.1).
+"""etl/octree_build.py — T0 octree bake (PLAN §H2, §16.4 It.1). MEMORY-FRUGAL.
 
-Reads the quantised partitions (etl/build/n32_*.bin, 32 B/star v0), Morton-sorts
-them, cuts leaves at ~LEAF_CAP stars, and emits the streaming artifact set:
+Reads quantised partitions (etl/build/n32_*.bin, 32 B/star v0) via memmap,
+Morton-sorts, cuts leaves at ~LEAF_CAP, emits:
 
-    etl/build/t0/tree_meta.json   root cube, schema, counts, sha256
-    etl/build/t0/nodes.bin        node metadata (resident set, PLAN §H2)
-    etl/build/t0/stars.bin        all stars in Morton order (32 B each)
-    etl/build/t0/leaves.idx       leaf -> (start record, count)
+    etl/build/t0/tree_meta.json | nodes.bin (80 B/node) | stars.bin | leaves.idx
 
-Node record v0 (80 B):
-    morton   u64      cell code (depth bits, root=0)
-    depth    u32
-    flags    u32      bit0 = is_leaf
-    count    u32
-    leaf_id  u32      index into leaves.idx (leaves only)
-    brightest f32     min Gaia G in subtree (LOD criterion input, §H2)
-    center   f32x3    cell centre, pc, Sun-centred ICRS
-    radius   f32      cell half-diagonal, pc
-    children i32x8    node indices, -1 = empty
+Peak RAM kept under ~500 MB so the 1 GB sandbox can bake the full 8.6 M-star
+cone: memmap input, sliding two-level leaf cut, single stable argsort, chunked
+gather on write, sorted star array never materialised.
 
-Deterministic: stable sorts, fixed tie-breaks, sha256 over outputs.
+Node record v0 (80 B, matches galaxia-data NodeRecord):
+    morton u64, depth u32, flags u32 (bit0 leaf), count u32, leaf_id u32,
+    brightest f32, centre f32x3 (pc, Sun-centred ICRS), radius f32, pad u32,
+    children i32x8 (node indices, -1 empty)
+
+Deterministic: stable sorts, fixed tie-breaks, sha256 over stars.bin.
 """
-import argparse, hashlib, json, os, struct, sys
+import argparse, hashlib, json, os, sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,45 +29,55 @@ REC = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("mag", "<f4"),
                 ("r", "<f4"), ("g", "<f4"), ("b", "<f4"), ("flags", "<u4")])
 NODE = np.dtype([("morton", "<u8"), ("depth", "<u4"), ("flags", "<u4"),
                  ("count", "<u4"), ("leaf_id", "<u4"), ("brightest", "<f4"),
-                 ("cx", "<f4"), ("cy", "<f4"), ("cz", "<f4"), ("radius", "<f4"), ("pad", "<u4"),
-                 ("children", "<i4", (8,))])
+                 ("cx", "<f4"), ("cy", "<f4"), ("cz", "<f4"), ("radius", "<f4"),
+                 ("pad", "<u4"), ("children", "<i4", (8,))])
 
 
-def load_partitions(limit_parts=0):
+def load_partitions_memmap(limit_parts=0):
     files = sorted(f for f in os.listdir(SRC) if f.startswith("n32_") and f.endswith(".bin"))
     if limit_parts:
         files = files[:limit_parts]
-    blobs = []
-    n = 0
-    for f in files:
-        p = os.path.join(SRC, f)
-        sz = os.path.getsize(p)
-        if sz == 0:
-            continue
-        blobs.append(np.fromfile(p, dtype=REC))
-        n += sz // 32
-    if not blobs:
+    sizes = [(f, os.path.getsize(os.path.join(SRC, f))) for f in files]
+    sizes = [(f, sz) for f, sz in sizes if sz > 0]
+    if not sizes:
         sys.exit("no partitions baked yet")
-    return np.concatenate(blobs), len(files)
+    total = sum(sz // 32 for _, sz in sizes)
+    os.makedirs(OUT, exist_ok=True)
+    out = np.memmap(os.path.join(OUT, ".stars.tmp"), dtype=REC, mode="w+", shape=(total,))
+    off = 0
+    for f, sz in sizes:
+        part = np.fromfile(os.path.join(SRC, f), dtype=REC)
+        out[off:off + len(part)] = part
+        off += len(part)
+        del part
+    out.flush()
+    return out, len(sizes)
 
 
 def morton3(x, y, z, depth):
-    """Interleave-bit Morton codes for integer coords in [0, 2^depth)."""
     code = np.zeros(len(x), dtype=np.uint64)
     for d in range(depth):
-        bit = np.uint64(1) << np.uint64(d)
-        bx = (x & bit.astype(x.dtype)) != 0
-        by = (y & bit.astype(y.dtype)) != 0
-        bz = (z & bit.astype(z.dtype)) != 0
+        bit = np.uint32(1) << np.uint32(d)
+        bx = (x & bit) != 0
+        by = (y & bit) != 0
+        bz = (z & bit) != 0
         code |= (bx.astype(np.uint64) << np.uint64(3 * d)) \
             | (by.astype(np.uint64) << np.uint64(3 * d + 1)) \
             | (bz.astype(np.uint64) << np.uint64(3 * d + 2))
+        del bx, by, bz
     return code
 
 
-def group_counts(codes):
-    u, inv, cnt = np.unique(codes, return_inverse=True, return_counts=True)
-    return u, inv, cnt
+def cell_geom(code, d, center, half):
+    c = np.array(center, np.float64)
+    s = 2 * half
+    for bit in range(d):
+        s /= 2
+        sh = 3 * (d - 1 - bit)
+        off = np.array([(code >> sh) & 1, (code >> (sh + 1)) & 1,
+                        (code >> (sh + 2)) & 1], np.float64) - 0.5
+        c = c + off * s
+    return c, float(np.sqrt(3) * s / 2)
 
 
 def main():
@@ -82,69 +87,65 @@ def main():
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
 
-    stars, nparts = load_partitions(args.limit_parts)
+    stars, nparts = load_partitions_memmap(args.limit_parts)
     n = len(stars)
     print(f"loaded {n} stars from {nparts} partitions", flush=True)
 
-    # ── root cube ────────────────────────────────────────────────────────────
-    xyz0 = np.column_stack([stars["x"], stars["y"], stars["z"]]).astype(np.float64)
-    lo = xyz0.min(axis=0)
-    hi = xyz0.max(axis=0)
+    # ── root cube + integer coords (f32 maths, int temps) ───────────────────
+    xs, ys, zs = stars["x"], stars["y"], stars["z"]
+    lo = np.array([xs.min(), ys.min(), zs.min()], np.float64)
+    hi = np.array([xs.max(), ys.max(), zs.max()], np.float64)
     center = (lo + hi) / 2.0
     half = float(np.max(hi - center)) * 1.0001
+    scale = np.float32((1 << MAX_DEPTH) / (2 * half))
+    half_off = np.float32(0.5 * (1 << MAX_DEPTH))
+    q = [None, None, None]
+    for i, (v, c) in enumerate(((xs, center[0]), (ys, center[1]), (zs, center[2]))):
+        t = ((v - np.float32(c)) * scale + half_off)
+        q[i] = np.clip(t.astype(np.uint32), 0, (1 << MAX_DEPTH) - 1)
+        del t
+    codes = morton3(q[0], q[1], q[2], MAX_DEPTH)
+    del q, xs, ys, zs
 
-    # integer coords at MAX_DEPTH
-    xyz = xyz0
-    q = np.clip(((xyz - center) / (2 * half) + 0.5) * (1 << MAX_DEPTH), 0,
-                (1 << MAX_DEPTH) - 1).astype(np.uint32)
-    codes = morton3(q[:, 0], q[:, 1], q[:, 2], MAX_DEPTH)
-
-    # sort stars by (code, original index) — deterministic Morton order
-    order = np.lexsort((np.arange(n), codes))
+    order = np.argsort(codes, kind="stable")
     codes_s = codes[order]
-    stars_s = stars[order]
+    del codes
 
-    # ── per-depth group counts (bottom-up leaf cutting) ─────────────────────
-    counts_at = {}
-    for d in range(MAX_DEPTH, -1, -1):
-        shift = np.uint64(3 * (MAX_DEPTH - d))
-        pref = codes_s >> shift if d < MAX_DEPTH else codes_s
-        u, inv, cnt = group_counts(pref)
-        counts_at[d] = (u, cnt)
+    # ── leaf cutting: sliding two-level window (2 levels live at a time) ────
+    def level(d):
+        pref = codes_s >> np.uint64(3 * (MAX_DEPTH - d)) if d < MAX_DEPTH else codes_s
+        return np.unique(pref, return_counts=True)
 
-    # leaves: deepest nodes with count <= cap whose parent exceeds cap (or root)
-    leaf_codes = []
-    leaf_depth = []
-    leaf_counts = []
+    leaf_codes, leaf_depth, leaf_counts = [], [], []
+    u_d, cnt_d = level(MAX_DEPTH)
+    u_p = cnt_p = None
     for d in range(MAX_DEPTH, -1, -1):
-        u, cnt = counts_at[d]
-        eligible = (cnt <= args.leaf_cap) | (d == MAX_DEPTH)
-        if d == 0:
-            sel = eligible
-        else:
-            pu, pcnt = counts_at[d - 1]
-            parent = u >> np.uint64(3)
-            idx = np.searchsorted(pu, parent)
-            pcount = pcnt[np.clip(idx, 0, len(pcnt) - 1)]
+        if d > 0:
+            u_p, cnt_p = level(d - 1)
+            parent = u_d >> np.uint64(3)
+            pi = np.searchsorted(u_p, parent)
+            pcount = cnt_p[np.clip(pi, 0, len(cnt_p) - 1)]
+            eligible = (cnt_d <= args.leaf_cap) | (d == MAX_DEPTH)
             sel = eligible & (pcount > args.leaf_cap)
-        leaf_codes.append(u[sel])
+            del parent, pi, pcount
+        else:
+            sel = cnt_d <= args.leaf_cap
+        leaf_codes.append(u_d[sel])
         leaf_depth.append(np.full(int(sel.sum()), d, np.uint8))
-        leaf_counts.append(cnt[sel])
-    # a star's leaf = the selected node that prefixes its code; resolve by
-    # walking depths shallow->deep with searchsorted (vectorised per depth)
+        leaf_counts.append(cnt_d[sel])
+        if d > 0:
+            u_d, cnt_d = u_p, cnt_p
+        del sel
+    del u_d, cnt_d, u_p, cnt_p
+
     leaf_code = np.concatenate(leaf_codes)
     leaf_d = np.concatenate(leaf_depth)
     leaf_cnt = np.concatenate(leaf_counts)
     n_leaves = len(leaf_code)
 
-    # Block (concat) order is depth-descending; record per-depth base offsets,
-    # assign stars in THAT id space, then remap ids through the code-sort
-    # permutation so ids match the emitted (code-sorted) leaf table.
+    # assign in block (depth-descending) id space, then remap through the
+    # DEPTH-ALIGNED code sort (mixed-depth raw numeric order != spatial order)
     offs, acc = {}, 0
-    for blk in leaf_codes:  # appended MAX_DEPTH..0
-        d_blk = None
-        acc += 0
-    acc = 0
     for d in range(MAX_DEPTH, -1, -1):
         offs[d] = acc
         acc += int(np.sum(leaf_d == d))
@@ -160,44 +161,36 @@ def main():
         lc = sub[np.clip(idx, 0, len(sub) - 1)]
         ok = hit & (lc == pref)
         assign_old[ok] = offs[d] + idx[ok]
-
-    # Mixed-depth codes must be compared DEPTH-ALIGNED: numeric order of raw
-    # codes does not match spatial interval order across depths.
-    aligned = leaf_code.astype(np.uint64) << np.uint64(3 * (MAX_DEPTH - leaf_d.astype(np.uint64)))
+        del sub, pref, idx, hit, lc, ok, m
+    aligned = leaf_code.astype(np.uint64) << np.uint64(
+        3 * (MAX_DEPTH - leaf_d.astype(np.uint64)))
     sort_i = np.argsort(aligned, kind="stable")
     rank = np.empty(n_leaves, np.int64)
     rank[sort_i] = np.arange(n_leaves)
     leaf_code, leaf_d, leaf_cnt = leaf_code[sort_i], leaf_d[sort_i], leaf_cnt[sort_i]
     assign = rank[assign_old]
+    del assign_old, aligned, rank, sort_i
 
     bad = (assign < 0) | (assign >= n_leaves)
-    chk = np.bincount(assign[~bad], minlength=n_leaves) if (~bad).any() else np.zeros(n_leaves, np.int64)
+    chk = np.bincount(assign[~bad], minlength=n_leaves) if (~bad).any() \
+        else np.zeros(n_leaves, np.int64)
     mis = np.nonzero(chk != leaf_cnt)[0]
     print(f"leaves: {n_leaves} (cap {args.leaf_cap}); max leaf {leaf_cnt.max()}; "
           f"UNASSIGNED={int(bad.sum())} MISMATCHED={len(mis)}", flush=True)
     assert not bad.sum() and not len(mis), "leaf assignment inconsistent"
 
-    # per-leaf brightest (min G) via reduceat on contiguous ranges
+    # per-leaf brightest (min G): chunked over the sorted order
     starts = np.searchsorted(assign, np.arange(n_leaves))
     ends = np.append(starts[1:], n)
-    brightest_leaf = np.array([
-        stars_s["mag"][s:e].min() if e > s else 99.0 for s, e in zip(starts, ends)
-    ], np.float32)
+    mags_s = stars["mag"][order]  # f32 gather, ~34 MB
+    brightest_leaf = np.empty(n_leaves, np.float32)
+    for i in range(n_leaves):
+        s_, e_ = starts[i], ends[i]
+        brightest_leaf[i] = mags_s[s_:e_].min() if e_ > s_ else 99.0
+    del mags_s
 
-    # ── node table: leaves + all ancestors, children indices ────────────────
-    def cell_geom(code, d):
-        """Cell centre (pc) and half-diagonal for a Morton cell at depth d."""
-        c = np.array(center, np.float64)
-        s_ = 2 * half
-        for bit in range(d):
-            s_ /= 2
-            sh = 3 * (d - 1 - bit)
-            off = np.array([(code >> sh) & 1, (code >> (sh + 1)) & 1,
-                            (code >> (sh + 2)) & 1], np.float64) - 0.5
-            c = c + off * s_
-        return c, float(np.sqrt(3) * s_ / 2)
-
-    nodes = {}   # (code, depth) -> dict   (code alone is ambiguous: root == octant 0)
+    # ── node table, keys (code, depth): raw code is ambiguous (root == oct 0) ─
+    nodes = {}
     for i, (lc, d, cnt, br) in enumerate(zip(leaf_code, leaf_d, leaf_cnt, brightest_leaf)):
         nodes[(int(lc), int(d))] = dict(depth=int(d), count=int(cnt), leaf=i,
                                         brightest=float(br), is_leaf=True)
@@ -223,7 +216,7 @@ def main():
     tbl = np.zeros(len(codes_list), NODE)
     for i, (code, d) in enumerate(codes_list):
         nd = nodes[(code, d)]
-        c, rad = cell_geom(code, d)
+        c, rad = cell_geom(code, d, center, half)
         kids = [-1] * 8
         if not nd["is_leaf"]:
             for k in range(8):
@@ -233,10 +226,17 @@ def main():
         tbl[i] = (code, d, 1 if nd["is_leaf"] else 0, nd["count"],
                   nd["leaf"] if nd["is_leaf"] else 0, nd["brightest"],
                   c[0], c[1], c[2], rad, 0, kids)
+    del nodes, index
 
-    # ── write artifacts ─────────────────────────────────────────────────────
+    # ── write artifacts (chunked gather; sorted stars never materialised) ───
     stars_path = os.path.join(OUT, "stars.bin")
-    stars_s.tofile(stars_path)
+    h = hashlib.sha256()
+    with open(stars_path, "wb") as fh:
+        for a in range(0, n, 1 << 20):
+            chunk = stars[order[a:a + (1 << 20)]]
+            chunk.tofile(fh)
+            h.update(chunk.tobytes())
+            del chunk
     tbl.tofile(os.path.join(OUT, "nodes.bin"))
     idx = np.zeros(n_leaves, np.dtype([("start", "<u8"), ("count", "<u4"), ("pad", "<u4")]))
     idx["start"] = starts
@@ -248,10 +248,15 @@ def main():
         "nodes": int(len(codes_list)), "leaf_cap": args.leaf_cap, "max_depth": MAX_DEPTH,
         "root_center_pc": [float(v) for v in center], "root_half_pc": half,
         "record_bytes": 32, "node_bytes": int(NODE.itemsize),
-        "sha256_stars": hashlib.sha256(open(stars_path, "rb").read()).hexdigest(),
+        "sha256_stars": h.hexdigest(),
     }
     json.dump(meta, open(os.path.join(OUT, "tree_meta.json"), "w"), indent=1)
-    print(json.dumps({k: meta[k] for k in ("stars", "leaves", "nodes", "partitions")}), flush=True)
+    try:
+        os.remove(os.path.join(OUT, ".stars.tmp"))
+    except OSError:
+        pass
+    print(json.dumps({k: meta[k] for k in ("stars", "leaves", "nodes", "partitions")}),
+          flush=True)
     print("OCTREE BUILD DONE", flush=True)
 
 

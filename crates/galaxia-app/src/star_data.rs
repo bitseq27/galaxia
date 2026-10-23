@@ -85,7 +85,7 @@ pub fn load_gaia_csv(path: &Path) -> anyhow::Result<StarSource> {
         };
         let pos_au = equatorial_to_cartesian_au(ra, dec, dist_pc);
         let pos_pc = [pos_au.x / AU_IN_PC, pos_au.y / AU_IN_PC, pos_au.z / AU_IN_PC];
-        let color = match c_bprp.and_then(|i| parse(i)).map(|v| v as f32) {
+        let color = match c_bprp.and_then(parse).map(|v| v as f32) {
             Some(bp_rp) if bp_rp.is_finite() => bp_rp_to_rgb_crude(bp_rp),
             _ => UNKNOWN_RGB,
         };

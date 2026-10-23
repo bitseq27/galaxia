@@ -89,7 +89,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             cam_up: up,
             time_s: frame as f32 * 0.016,
             exposure: cli.exposure,
-            _pad0: 0.0,
+            m0: if use_t0 { cli.m0 } else { 99.0 },
             _pad1: 0.0,
             _pad2: 0.0,
             _pad3: 0.0,
@@ -152,7 +152,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             }
             // Count lit pixels as a sanity check that stars actually drew.
             let lit = rgba
-                .chunks_exact(4)
+                .as_chunks::<4>().0.iter()
                 .filter(|p| (p[0] as u32 + p[1] as u32 + p[2] as u32) > 24)
                 .count();
             tracing::info!(lit_pixels = lit, total = rgba.len() / 4, "frame content check");

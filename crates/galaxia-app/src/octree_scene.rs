@@ -7,6 +7,7 @@ use galaxia_render::StarPass;
 use glam::{DVec3, Vec4};
 use std::collections::HashSet;
 
+#[allow(dead_code)] // evictions/desired surface in the It.6 governor overlay
 pub struct FrameStats {
     pub desired_leaves: usize,
     pub resident_leaves: usize,
@@ -48,6 +49,7 @@ impl OctreeScene {
         })
     }
 
+    #[allow(dead_code)] // windowed overlay consumes these from It.1 onward
     pub fn tree(&self) -> &T0Tree {
         &self.tree
     }
@@ -69,12 +71,11 @@ impl OctreeScene {
         // coalesce
         let mut out: Vec<(u32, u32)> = Vec::with_capacity(self.free.len());
         for r in self.free.drain(..) {
-            if let Some(last) = out.last_mut() {
-                if last.0 + last.1 == r.0 {
+            if let Some(last) = out.last_mut()
+                && last.0 + last.1 == r.0 {
                     last.1 += r.1;
                     continue;
                 }
-            }
             out.push(r);
         }
         self.free = out;
@@ -146,6 +147,7 @@ impl OctreeScene {
         &self.ranges
     }
 
+    #[allow(dead_code)]
     pub fn gpu_cap(&self) -> u32 {
         self.gpu_cap
     }

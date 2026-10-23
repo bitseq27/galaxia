@@ -67,8 +67,11 @@ impl ResidentSet {
     }
 
     /// Reconcile against this frame's desired leaf set.
-    /// Returns (leaves to evict, leaves to load). Evictions happen only for
-    /// leaves no longer desired, or under capacity pressure (LRU first).
+    /// Policy (session 002 fix): evict ONLY residents no longer desired.
+    /// Never evict a desired resident to make room for another desired leaf —
+    /// that thrashes (everything evicted before its replacement arrives and
+    /// the drawn set collapses to 0). Oversubscription is resolved by leaving
+    /// the tail of the stable (leaf-id) order unloaded until capacity frees.
     pub fn reconcile(&mut self, desired: &[u32], leaf_counts: &[u32]) -> (Vec<u32>, Vec<u32>) {
         let want: std::collections::HashSet<u32> = desired.iter().copied().collect();
         let mut evict = Vec::new();
@@ -80,6 +83,7 @@ impl ResidentSet {
         for &l in &evict {
             self.remove(l);
         }
+        let mut free = self.capacity.saturating_sub(self.total_stars);
         let mut load = Vec::new();
         for &l in desired {
             if self.resident.contains_key(&l) {
@@ -87,25 +91,10 @@ impl ResidentSet {
                 continue;
             }
             let count = leaf_counts[l as usize];
-            // capacity pressure: evict LRU until it fits
-            while self.total_stars + count > self.capacity {
-                match self.lru.pop_front() {
-                    Some(v) => {
-                        self.remove(v);
-                        evict.push(v);
-                    }
-                    None => break,
-                }
-            }
-            if self.total_stars + count <= self.capacity {
+            if count <= free {
+                free -= count;
                 load.push(l);
-                // reserve optimistically so a burst of requests cannot oversubscribe
-                self.total_stars += count;
             }
-        }
-        // undo optimistic reservation for loads not yet inserted (insert re-adds)
-        for &l in &load {
-            self.total_stars -= leaf_counts[l as usize];
         }
         (evict, load)
     }

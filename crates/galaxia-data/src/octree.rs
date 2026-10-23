@@ -177,3 +177,58 @@ pub fn frustum_planes(vp: &glam::Mat4) -> [Vec4; 6] {
         mk(r3, r2, -1.0), // far
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// It.1 astrometry gate (sandbox side): the 32 B quantisation stores f32
+    /// parsecs. Worst-case angular error of a position at distance d is
+    /// ulp(d)/2 / d radians. Must stay far below the 1 arcsec gate out to
+    /// the T0 ceiling (5 kpc). Full <1 arcsec vs Stellarium validation of
+    /// named stars runs on the target machine (PLAN §17.1).
+    #[test]
+    fn quantisation_angular_error_under_one_arcsec() {
+        let one_arcsec_rad = 4.848_136_8e-6;
+        for d_pc in [10.0_f32, 137.0, 400.0, 1500.0, 5000.0] {
+            let ulp = (d_pc * 2.0f32.powi(-23)).abs(); // f32 spacing at d
+            let err_rad = (ulp * 0.5) / d_pc;
+            // f32 pc gives ~2^-24 rad = 0.012 arcsec — assert with 10x margin
+            // against the 1 arcsec gate (PLAN §17.1).
+            assert!(
+                err_rad < one_arcsec_rad / 10.0,
+                "d={d_pc} pc: {err_rad} rad >= 1/10 arcsec"
+            );
+        }
+    }
+
+    #[test]
+    fn frustum_planes_contain_camera_forward() {
+        // glam 0.34 has no look_at/perspective ctors — build by hand.
+        let eye = glam::Vec3::new(0.0, 0.0, 5.0);
+        let view = glam::Mat4::from_rows(
+            glam::Vec4::new(1.0, 0.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 1.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, 1.0, -5.0), // backward·p - backward·eye
+            glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        );
+        let f = 1.0 / (1.0f32 * 0.5).tan();
+        let proj = glam::Mat4::from_cols_array(&[
+            f / 1.777, 0.0, 0.0, 0.0,
+            0.0, f, 0.0, 0.0,
+            0.0, 0.0, 0.0, -1.0,
+            0.0, 0.0, 1e-4, 0.0,
+        ]);
+        let vp = proj * view;
+        let _ = eye;
+        let planes = frustum_planes(&vp);
+        // a point straight ahead, mid-depth, must be inside all six planes
+        let p = glam::Vec3::new(0.0, 0.0, 2.0);
+        for pl in &planes {
+            assert!(pl.dot(p.extend(1.0)) >= -1e-4, "plane {pl:?} rejects forward point");
+        }
+        // a point far outside to the side must be rejected by some plane
+        let q = glam::Vec3::new(50.0, 0.0, 2.0);
+        assert!(planes.iter().any(|pl| pl.dot(q.extend(1.0)) < 0.0));
+    }
+}
