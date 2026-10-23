@@ -665,3 +665,125 @@ at 1.5M/3M (both must PASS), benches median-of-3 with sha256 ref, then the
 full session record. Do NOT request a larger MAXREC — ESA ignores it.
 
 **Commit:** `614dc63`
+
+---
+
+## Session 006 — 2026-10-24 — Iteration 1 (the 50k truncation fix: exact tiling)
+
+**Goal:** Fix s005's CRITICAL data debt — the ESA archive's silent 50k-row cap
+left 24% of the cone unfetched — land a COMPLETE T0, re-run every It.1 gate on
+the full dataset, record.
+
+**Started from:** commit `ce85fc5` on a FRESH CLONE: sandbox reset (no toolchain,
+no `etl/build/` — it is gitignored), so the session inherited only the committed
+manifest saying 102/424 pixel partitions were truncated and the cone was 76%
+fetched. Resume protocol: tests 18/18 green; orion_wide shot mean-Δ 1.203/255 vs
+the iter0 shot (= the known s002 curve drift, s005 saw 1.16); the 10% bench rule
+FIRED (orion_wide quiet cluster ~21-24 ms vs recorded 39.9) and was investigated
+before any work: tree identical, sha256sum ref 330 ≈ s005's 340, no steal, no
+bimodality at the quiet cluster ⇒ this host's llvmpipe raster tracks the s002
+host class (23.8), not the contended s003-s005 hosts — host difference, not a
+regression. t0 could not be benched at resume (artifacts gone) — that was the
+session's job anyway.
+
+**Done:**
+- **s005's prescribed fix implemented, then MEASURED UNSOUND.** `fetch_orion.py`
+  gained recursive child sub-partitioning (canary → 4 n64 children → concat;
+  RING-child convention `nest2ring(2n, 4*ring2nest(n,p)..+3)` verified against
+  healpy containment first). Smoke fetch of n32_4702: canary at 50,000 → 4
+  children summed 60,789. An async COUNT battery then showed parent polygon =
+  **60,792**, children sum **60,789**, parent∩¬children **82** rows, and child
+  overhang **79** rows that ALSO lie in the neighbour pixel (double-counts).
+  Cause: `pixel_polygon`'s great-circle chords approximate curved HEALPix
+  edges; n32 and n64 chord sets differ, and chords can never tile the CONE RIM
+  exactly either — so the "Σ == 15,573,949 EXACTLY" gate is unreachable in the
+  polygon scheme. Evidence kept in `etl/reports/s006_pixel_smoke/` +
+  `etl/reports/s006_jobs.json`.
+- **Pivot to exact tiling:** `etl/fetch_cone_exact.py` — half-open dec bands ×
+  ra boxes intersected with the SAME `CONTAINS(CIRCLE)` predicate that produced
+  the DAY0 count (PLAN §8.4.1 rule 1's "RA bands" partitioning). Every cone row
+  satisfies exactly one box ⇒ the completeness sum is exact BY CONSTRUCTION;
+  adjacent boxes share the identical formatted boundary string (no gap/overlap).
+  Canary ≥49,999 → split the longer axis, recurse (floor depth 12), concat
+  children ascending; per-region bins + manifest = resumable; subdivided
+  (internal) bins live in `etl/build/internal/` so the octree baker's top-level
+  glob never double-counts parent+children; a non-ESA mirror result is forced
+  through an async COUNT re-verification (foreign mirrors could cap below the
+  canary silently). `etl/tap_count.py` added: restart-safe async COUNT helper.
+- **Full fetch in 5 deadline-chunked runs (~2 h, `--deadline` exits cleanly
+  between regions — background processes die between tool calls here):**
+  **Σ(rows+skipped) = 15,573,949, delta +0 — GATE PASS.** 459 leaf boxes / 877
+  regions / max split depth 6; rows 11,029,030 (inside the predicted 11.0-11.2M
+  band), skipped 4,544,919 (≈ predicted noplx 2.07M + far_cap 2.46M); every
+  leaf+internal bin verified size==rows*32 and sha256 vs manifest; async COUNT
+  spot-checks on the 4 densest leaves ALL exact (49,921 / 49,844 / 49,835 /
+  49,580); max leaf 49,921 < canary (nothing truncated anywhere); mirrors
+  459/459 esa. The 3,697,152 rows stolen by the cap in s002-s005 are recovered.
+- **T0 re-bake — first attempt OOM-killed** (750 MB anon at 11.03M stars; the
+  8.6M-era builder fit by luck). `octree_build.py` memory fixes, outputs
+  bit-identical: chunked `morton3`; `level()` rewritten as a sorted-RLE pass
+  because `np.unique` copies AND re-sorts the already-sorted 11M Morton array
+  (~+450 MB peak) — RLE proven output-identical vs np.unique over 5 arrays × 5
+  depths incl. chunk-boundary, single-value, all-unique cases; u32 `order`,
+  i32 `assign`/`rank`; `log_mem` RSS trace kept. Re-bake: **11,029,150 stars /
+  403 leaves / 471 nodes / 460 partitions**, max leaf 98,142, sha256_stars
+  `5bc3f495…`, 16.4 s, peak RSS 591 MB. Literature bin re-baked byte-identical
+  to s005 (sha match; manifest delta = timestamp only).
+- **Gates re-run on the full dataset:** t0_orion_m13 shots at 1.5M + 3M caps
+  (3M needs `--frames 12` here — default 3 caught the stream mid-settle,
+  pending=33, on this fast host); `--fly-test 60,50` **PASS at both caps** (G1
+  min residents 1,048,940 / 1,541,625; G2 settle 0.257 / 0.334 s; 3,011/3,007 pc
+  flown; 298.5/351.1 MB; per-cap CSVs committed); benches: orion_wide quiet
+  median 24.4, t0 warm median 230.0 @1.5M cap; sha256 CPU ref re-measured over
+  the new 353 MB stars.bin = 327 MB/s; wedge quadrant spread 0.0050 @1.5M /
+  0.0070 @3M (no capacity wedge; 1.5M/3M lit ratio 84.8%); tests 18/18; clippy
+  clean incl. `--all-targets`.
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| cone rows fetched | 11,876,797 (76%) | **15,573,949 (Δ +0 vs DAY0 COUNT)** | exact ✔ |
+| T0 baked stars | 8,580,530 | **11,029,150** | ≥5 M visible ✔ (artifact level) |
+| leaves / nodes | 315 / 368 | **403 / 471** | recorded ✔ |
+| fly G1/G2 @1.5M cap | 1.048M / 0.607 s (s004) | **1.049M / 0.257 s** | >0 / ≤2 s ✔ |
+| fly G1/G2 @3M cap | 1.468M / 0.652 s (s004) | **1.542M / 0.334 s** | ✔ |
+| wedge quadrant spread @1.5M | 0.005–0.006 (s004) | **0.0050** | uniform ✔ |
+| bake peak RSS @11M stars | OOM (750 MB anon, killed) | **591 MB** | <1 GB ✔ |
+| frame ms orion_wide / t0 (this host) | 21–22 / n/a at resume | **24.4 / 230.0** | n/a — sandbox ≠ Titan (ADR-0010) |
+
+**Blockers hit:**
+- The s005 children plan itself (above). Dead end preserved WITH the four
+  numbers that kill it; "chord polygons tile" is now a documented falsehood —
+  see STATUS environment rules.
+- OOM at 11M stars — found by the new `log_mem` RSS trace (kill landed between
+  "codes_s gather" and the next label ⇒ `np.unique` in `level(16)`); fixed by
+  sorted-RLE. Note the kernel OOM-kills silently (exit 137, no traceback) —
+  check `dmesg` first next time.
+- First build chunk OOM-killed once on `x11rb-protocol` (transient contention);
+  plain retry built green. Same 1 GB ceiling, same -j1 rule.
+- 3M-cap screenshot mid-settle (see Done) — harness fidelity note recorded in
+  STATUS sandbox rules.
+
+**Not done / discovered work:**
+- 80 unresolved bright no-plx stars, windowed run, astrometry-vs-Stellarium:
+  unchanged, target-machine scope.
+- Static t0_orion_m13 @1.5M cap is nearly IDENTICAL to the s005 shot (mean-Δ
+  0.118/255, 0.66% px): the recovered 2.45M stars are mostly faint/dense-plane
+  and enter through m0/LOD/cap, not this view. Completeness is a dataset-level
+  win here; verify visually at full cap + higher m0 on the target machine.
+- It.2 chain (timer double-buffer, ADR-0002, Harre-Heller, rasteriser) = next.
+
+**Screenshot:** `docs/build/shots/2026-10-24-iter1-s006-t0-m13-cap3m.png`
+(+ `-cap1p5m`, `-flytest-cap1p5m-{mid,end}`, `-flytest-cap3m-{mid,end}`,
+`-resume-orion-wide`)
+
+**Next (precise):** Session 007 — It.2 kickoff per STATUS.next_action: (1) timer
+double-buffer in `crates/galaxia-render/src/timing.rs` so `poll_results` never
+blocks (gate: new no-wait unit test + benches within 10% of the s006 rows);
+(2) read PLAN §7.2/§7.3/§6.2 then write ADR-0002 adopting the software
+rasteriser with the measured fill-bound evidence; (3) Harre-Heller colour chain
+as a pure galaxia-core function with the §17 dE<3 unit test, swapped into
+`etl/galaxia_quant.py` and the shader path, T0 re-bake (16 s) + before/after
+orion_wide and t0 shots. Rasteriser itself only after 1–3 are green+recorded.
+
+**Commit:** `900c3bb`
