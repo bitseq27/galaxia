@@ -103,6 +103,7 @@ impl MoveState {
         )
     }
 
+    #[allow(dead_code)] // used by the governor/CI harness from It.6
     pub fn any_held(&self) -> bool {
         self.fwd || self.back || self.left || self.right || self.up || self.down
     }

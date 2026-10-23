@@ -15,7 +15,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "galaxia", version, about = "PROJECT MILKY WAY — Iteration 0 skeleton")]
 pub struct Cli {
     /// Named scene (PLAN §17.3 harness starts here).

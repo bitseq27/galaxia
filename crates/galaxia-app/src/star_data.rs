@@ -9,7 +9,7 @@ use galaxia_core::color::{bp_rp_to_rgb_crude, UNKNOWN_RGB};
 use galaxia_core::math::{equatorial_to_cartesian_au, parallax_mas_to_pc};
 use galaxia_core::units::AU_IN_PC;
 use galaxia_render::StarRecord;
-use rand::Rng;
+use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::SeedableRng;
 use std::path::Path;
@@ -19,6 +19,7 @@ pub const MAX_SKELETON_STARS: usize = 10_000;
 pub struct StarSource {
     pub stars: Vec<StarRecord>,
     pub provenance: String,
+    #[allow(dead_code)] // provenance reporting lands with the It.1 ETL
     pub skipped_no_distance: usize,
 }
 
@@ -108,16 +109,16 @@ pub fn procedural_10k() -> StarSource {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xC0FF_EE);
     let mut stars = Vec::with_capacity(MAX_SKELETON_STARS);
     for _ in 0..MAX_SKELETON_STARS {
-        let r = 5.0 + 900.0 * rng.random_range(0f64, 1f64).powf(1.6); // pc
-        let theta = rng.random_range(0.0, std::f64::consts::TAU);
+        let r = 5.0 + 900.0 * rng.random_range(0f64..1.0).powf(1.6); // pc
+        let theta = rng.random_range(0.0..std::f64::consts::TAU);
         // Exponential vertical profile, h ≈ 60 pc (thin disk, crude).
         let z = if rng.random_bool(0.5) { 1.0 } else { -1.0 }
-            * 60.0 * (-rng.random_range(1e-9f64, 1.0).ln());
+            * 60.0 * (-rng.random_range(1e-9f64..1.0).ln());
         let x = r * theta.cos();
         let y = r * theta.sin();
         // Brightness: log-uniform-ish, biased faint.
-        let mag = 1.0 + 8.0 * rng.random_range(0f64, 1f64).powf(1.8);
-        let bp_rp = rng.random_range(-0.3f32, 2.4);
+        let mag = 1.0 + 8.0 * rng.random_range(0f64..1.0).powf(1.8);
+        let bp_rp = rng.random_range(-0.3f32..2.4);
         stars.push(StarRecord {
             pos_pc: [x, y, z.min(400.0).max(-400.0)],
             mag: mag as f32,

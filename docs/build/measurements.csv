@@ -1,1 +1,2 @@
 timestamp,session,iteration,commit,scene,stars_visible,star_raster_ms,volumetrics_ms,glare_ms,post_ms,frame_ms_total,fps,peak_vram_gb,resident_leaves,stream_mb_s,notes
+2026-10-23T09:36:12Z,001,0,654bad1,orion_wide,10000,,,,,41.192,24.3,,,,sandbox lavapipe software raster — NOT Titan RTX numbers; It.0 skeleton point stars

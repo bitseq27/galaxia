@@ -51,9 +51,9 @@ impl OffscreenTarget {
     pub fn encode_copy(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_texture_to_buffer(
             self.texture.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &self.read_buf,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(self.width * 4),
                     rows_per_image: Some(self.height),
@@ -71,8 +71,8 @@ impl OffscreenTarget {
         let slice = self.read_buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        let mut rgba = slice.get_mapped_range().to_vec();
-        slice.unmap();
+        let mut rgba = slice.get_mapped_range()?.to_vec();
+        self.read_buf.unmap();
         // BGRA → RGBA
         for px in rgba.chunks_exact_mut(4) {
             px.swap(0, 2);

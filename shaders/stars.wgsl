@@ -17,7 +17,12 @@ struct FrameUniforms {
     exposure: f32,
     _pad0: f32,
     _pad1: f32,
-};
+    _pad2: f32,
+    _pad3: f32,
+    _pad4: f32,
+    _pad5: f32,
+    _pad6: f32,
+};  // size = 128 B, multiple of the uniform address-space align (16)
 
 struct Star {
     pos_pc: vec3<f32>,
@@ -44,7 +49,7 @@ const CORNERS: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
 // Screen radius in pixels from G magnitude — skeleton tuning curve.
 // Real photometry→pixel mapping is PLAN §7.1 (It.2).
 fn star_radius_px(mag: f32) -> f32 {
-    return clamp(pow(10.0, -0.17 * (mag - 4.5)) * 1.6, 0.7, 40.0);
+    return clamp(pow(10.0, -0.20 * (mag - 5.5)) * 2.2, 1.2, 48.0);
 }
 
 @vertex
@@ -68,7 +73,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     out.uv = corner;
     out.color = s.color;
     // Bright stars saturate toward white; faint ones stay dim. Flux-ish curve.
-    out.bright = clamp(pow(10.0, -0.2 * (s.mag - 6.5)), 0.04, 10.0) * u.exposure;
+    out.bright = clamp(pow(10.0, -0.25 * (s.mag - 7.5)), 0.15, 14.0) * u.exposure;
     return out;
 }
 

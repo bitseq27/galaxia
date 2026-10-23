@@ -52,4 +52,7 @@ in six months by someone who does not remember.>
 
 ## Actual ADRs
 
-*(none yet)*
+| # | Title | Status | Session |
+|---|---|---|---|
+| [0004](0004-orion-prototype-region.md) | Orion as the prototype region (measured count supersedes estimate) | Accepted | 001 |
+| [0010](0010-sandbox-gles-build.md) | Build sandbox: Linux + GLES/llvmpipe instead of Windows/Vulkan | Accepted | 001 |

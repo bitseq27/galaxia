@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+default = ["vulkan"]
+vulkan = ["galaxia-render/vulkan"]
+gles = ["galaxia-render/gles"]
+dx12 = ["galaxia-render/dx12"]
+
 [[bin]]
 name = "galaxia"
 path = "src/main.rs"

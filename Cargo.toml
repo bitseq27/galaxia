@@ -14,13 +14,16 @@ publish = false
 
 [workspace.dependencies]
 # PINNED per PLAN Appendix B — do not upgrade mid-project without an ADR.
-wgpu = "=30.0.1"
+# Backends are feature-gated per member crate: default = vulkan (Windows target,
+# decision D-stack); the build sandbox compiles `gles` only, because rustc OOMs
+# on `ash` in 1 GB RAM (ADR-0010). Cargo.lock is identical either way.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 naga = "=30.0.1"
 winit = "0.30.13"
 raw-window-handle = "0.6.2"
 egui = "0.37.0"
 egui-winit = "0.37.0"
-egui-wgpu = "0.37.0"
+egui-wgpu = { version = "0.37.0", default-features = false }  # its default pulls wgpu/default -> vulkan -> ash (OOM in sandbox, ADR-0010)
 glam = { version = "0.34.1", features = ["serde"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 pollster = "1.0.1"
@@ -30,13 +33,13 @@ anyhow = "1.0.104"
 thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-rand = "0.9"
+rand = "0.10"
 rand_xoshiro = "0.8.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
 
 galaxia-core = { path = "crates/galaxia-core" }
-galaxia-render = { path = "crates/galaxia-render" }
+galaxia-render = { path = "crates/galaxia-render", default-features = false }
 
 [profile.release]
 lto = "thin"

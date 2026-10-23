@@ -54,7 +54,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
     );
     let ts_period = gpu.queue.get_timestamp_period(); // ns per tick
 
-    let mut cam = camera_for_scene(&cli.scene);
+    let cam = camera_for_scene(&cli.scene);
     let aspect = cli.width as f32 / cli.height as f32;
     let px_scale = 2.0 * (FOV_Y_RAD * 0.5).tan() / cli.height as f32;
 
@@ -80,6 +80,11 @@ pub async fn run(cli: &Cli) -> Result<()> {
             exposure: cli.exposure,
             _pad0: 0.0,
             _pad1: 0.0,
+            _pad2: 0.0,
+            _pad3: 0.0,
+            _pad4: 0.0,
+            _pad5: 0.0,
+            _pad6: 0.0,
         };
         star_pass.write_uniforms(&gpu.queue, &uniforms);
 
@@ -106,6 +111,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             timers.begin(&mut rpass, 0);
             timers.end(&mut rpass, 0);
@@ -114,7 +120,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             timers.end(&mut rpass, 1);
         }
         target.encode_copy(&mut encoder);
-        timers.resolve(&mut encoder);
+        let did_resolve = timers.resolve(&mut encoder);
 
         if frame + 1 == cli.frames {
             // Last frame: read pixels (blocks — screenshots only).
@@ -135,10 +141,10 @@ pub async fn run(cli: &Cli) -> Result<()> {
         } else {
             gpu.queue.submit([encoder.finish()]);
         }
+        timers.begin_readback(did_resolve);
         if let Some(raw) = timers.poll_results(&gpu.device) {
             last_gpu = graph.fold_timings(&raw, ts_period);
         }
-        let _ = &mut watcher; // keep parity with windowed path; no reload headless
     }
     // Give the timers one more poll chance.
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
@@ -146,8 +152,14 @@ pub async fn run(cli: &Cli) -> Result<()> {
         last_gpu = graph.fold_timings(&raw, ts_period);
     }
 
-    let stars_ms = last_gpu.per_pass.get(1).copied().flatten();
-    let frame_ms = last_gpu.frame_gpu_ms.or(stars_ms).unwrap_or(last_cpu_ms as f32);
+    // GPU timestamps on software rasterisers (llvmpipe) can report ~0 and
+    // produce absurd fps; treat anything < 0.01 ms as invalid and fall back
+    // to CPU wall time. On real GPUs the GPU number is authoritative.
+    let valid = |v: Option<f32>| v.filter(|x| *x >= 0.01);
+    let stars_ms = valid(last_gpu.per_pass.get(1).copied().flatten());
+    let frame_ms = valid(last_gpu.frame_gpu_ms)
+        .or(stars_ms)
+        .unwrap_or(last_cpu_ms as f32);
     let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
 
     if cli.bench {

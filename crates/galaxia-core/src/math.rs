@@ -53,9 +53,10 @@ mod tests {
 
     #[test]
     fn separation_alnilam_to_betelgeuse() {
-        // Alnilam (84.053, -1.202), Betelgeuse (88.793, 7.407) → ~9.6° apart.
+        // Alnilam (84.053, -1.202), Betelgeuse (88.793, 7.407) → 9.82° apart
+        // (hand-verified via the spherical law of cosines).
         let sep = angular_separation_deg(84.053, -1.202, 88.793, 7.407);
-        assert!((sep - 9.6).abs() < 0.2, "sep={sep}");
+        assert!((sep - 9.82).abs() < 0.01, "sep={sep}");
     }
 
     #[test]

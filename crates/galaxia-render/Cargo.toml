@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+default = ["vulkan"]
+vulkan = ["wgpu/vulkan"]
+gles = ["wgpu/gles"]
+dx12 = ["wgpu/dx12"]
+
 [dependencies]
 galaxia-core = { workspace = true }
 wgpu = { workspace = true }

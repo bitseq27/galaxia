@@ -14,18 +14,25 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    /// Create a device. `force_vulkan` keeps backend selection deterministic
-    /// across machines (the Windows target runs Vulkan; the Linux build sandbox
-    /// runs lavapipe/llvmpipe via Vulkan).
+    /// Create a device. Backend choice is compile-time (ADR-0010): the Windows
+    /// target builds with `vulkan` (decision D-stack); the build sandbox builds
+    /// with `gles` because rustc OOMs on `ash` in 1 GB RAM. Only compiled-in
+    /// backends can ever be selected, so runtime behaviour stays deterministic
+    /// per build flavour.
     pub async fn new(force_vulkan: bool) -> Result<Self> {
-        let backends = if force_vulkan {
+        let backends = if cfg!(feature = "vulkan") && force_vulkan {
             wgpu::Backends::VULKAN
+        } else if cfg!(feature = "gles") && !cfg!(feature = "vulkan") {
+            wgpu::Backends::GL
         } else {
             wgpu::Backends::PRIMARY
         };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
         });
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -39,11 +46,14 @@ impl GpuContext {
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
 
-        // TIMESTAMP_QUERY is optional: lavapipe supports it, but we degrade
-        // gracefully to CPU timings when absent (never block the skeleton).
-        let want = wgpu::Features::TIMESTAMP_QUERY;
+        // Timestamps are optional: we degrade gracefully to CPU timings when
+        // absent (never block the skeleton). wgpu 30 splits the feature:
+        // writing timestamps INSIDE passes needs TIMESTAMP_QUERY_INSIDE_PASSES
+        // in addition to TIMESTAMP_QUERY (resolve/readback).
+        let want = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
         let features = adapter.features() & want;
-        let has_timestamps = features.contains(wgpu::Features::TIMESTAMP_QUERY);
+        let has_timestamps = features.contains(wgpu::Features::TIMESTAMP_QUERY)
+            && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -60,7 +70,7 @@ impl GpuContext {
         tracing::info!(adapter = %adapter_info, timestamps = has_timestamps, "GPU ready");
         Ok(Self {
             instance,
-            adapter,
+            adapter: Arc::new(adapter),
             device: Arc::new(device),
             queue: Arc::new(queue),
             has_timestamps,

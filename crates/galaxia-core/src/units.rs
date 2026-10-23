@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 1 parsec in AU (IAU definition: 648000/π AU).
-pub const AU_IN_PC: f64 = 206_264.806_247_096_400.0e-9; // ≈ 206264.806
+pub const AU_IN_PC: f64 = 206264.8062470964; // 648000/pi
 /// Speed of light in AU per day.
 pub const C_AU_PER_DAY: f64 = 173.144_632_674;
 /// J2000.0 epoch as Julian Date.

@@ -52,7 +52,16 @@ pub struct FrameUniforms {
     pub exposure: f32,
     pub _pad0: f32,
     pub _pad1: f32,
+    pub _pad2: f32,
+    pub _pad3: f32,
+    pub _pad4: f32,
+    pub _pad5: f32,
+    pub _pad6: f32,
 }
+
+// static_assert: uniform struct must be exactly 128 B (WGSL uniform address
+// space rounds to a multiple of the 16 B align; naga validates binding size).
+const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 128);
 
 pub struct StarPass {
     pub pipeline: wgpu::RenderPipeline,
@@ -101,8 +110,8 @@ impl StarPass {
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("star-pass-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
 
         // Blend: additive (ONE, ONE) into the swapchain/offscreen target.
@@ -139,16 +148,16 @@ impl StarPass {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     // Set per-surface at creation time by the caller? No — the
                     // skeleton renders to a single known format chosen in
                     // `pipeline_for_format`. Callers must use that.
                     format: PIPELINE_FORMAT,
                     blend,
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

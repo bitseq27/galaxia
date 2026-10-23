@@ -26,9 +26,9 @@ impl Default for Camera {
         Self {
             pos_pc: DVec3::ZERO,
             // Look toward the Orion cone centre: RA 83.82°, Dec −5.39°.
-            yaw: -(83.82f64).to_radians(),
+            yaw: (83.82f64).to_radians(),
             pitch: (-5.39f64).to_radians(),
-            yaw_target: -(83.82f64).to_radians(),
+            yaw_target: (83.82f64).to_radians(),
             pitch_target: (-5.39f64).to_radians(),
             speed_exp: 2.0, // 100 AU/s ≈ 0.0005 pc/s — gentle local drift
             rot_damping: 12.0,
@@ -44,19 +44,23 @@ impl Camera {
     }
 
     /// Forward unit vector (where the camera looks), in the equatorial frame.
+    /// yaw == right ascension, pitch == declination (both radians).
     pub fn forward(&self) -> DVec3 {
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
         DVec3::new(cy * cp, sy * cp, sp)
     }
 
+    /// Screen right for a viewer facing `forward` with world up +Z:
+    /// r = normalize(forward × up_world) = (sin yaw, −cos yaw, 0).
     pub fn right(&self) -> DVec3 {
         let (sy, cy) = self.yaw.sin_cos();
-        DVec3::new(-sy, cy, 0.0)
+        DVec3::new(sy, -cy, 0.0)
     }
 
+    /// Screen up: u = right × forward (≈ +Z at zero pitch).
     pub fn up(&self) -> DVec3 {
-        self.forward().cross(self.right()).normalize()
+        self.right().cross(self.forward()).normalize()
     }
 
     /// Integrate one frame of movement + rotation damping.
@@ -82,7 +86,7 @@ impl Camera {
 
     /// Look at a sky position (RA/Dec degrees) — used by scene presets.
     pub fn look_at_equatorial(&mut self, ra_deg: f64, dec_deg: f64) {
-        self.yaw = -ra_deg.to_radians();
+        self.yaw = ra_deg.to_radians();
         self.pitch = dec_deg.to_radians();
         self.yaw_target = self.yaw;
         self.pitch_target = self.pitch;
@@ -92,11 +96,32 @@ impl Camera {
     /// Reversed-Z infinite-far (PLAN §5.4) via glam. `near_pc` is the derived
     /// near plane — the skeleton uses a fixed small value; It.3 derives it.
     pub fn view_proj_f32(&self, aspect: f32, fov_y_rad: f32, near_pc: f32) -> Mat4 {
-        let view = Mat4::from_rotation_pitch(-(self.pitch as f32))
-            * Mat4::from_rotation_yaw(-(self.yaw as f32))
-            * Mat4::from_translation(-self.pos_pc.as_vec3());
+        // Right-handed look-to view from the camera basis (world up +Z,
+        // equatorial frame). f32 eye translation is the It.0 shortcut.
+        // Manual look-to (glam 0.34 dropped look_at_*). Rows of the rotation
+        // are the camera basis; translation is -basis·eye. RH: Z = backward.
+        let r = self.right();
+        let u = self.up();
+        let b = -self.forward(); // backward
+        let e = self.pos_pc;
+        let view = Mat4::from_rows(
+            glam::Vec4::new(r.x as f32, r.y as f32, r.z as f32, -r.dot(e) as f32),
+            glam::Vec4::new(u.x as f32, u.y as f32, u.z as f32, -u.dot(e) as f32),
+            glam::Vec4::new(b.x as f32, b.y as f32, b.z as f32, -b.dot(e) as f32),
+            glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        );
         // NOTE: -cam.pos in f32 is the It.0 shortcut; split-double lands It.3.
-        let proj = Mat4::perspective_infinite_reverse_rh(fov_y_rad, aspect, near_pc);
+        // Reversed-Z infinite-far RH projection (PLAN §5.4), built by hand:
+        // glam 0.34's f32 Mat4 lacks perspective_infinite_reverse_rh.
+        //   clip.z = near, clip.w = -z_view  →  ndc.z = near/(-z) ∈ (0,1],
+        //   near→1, ∞→0. Depth buffer arrives It.1; the convention is set now.
+        let f = 1.0 / (fov_y_rad * 0.5).tan();
+        let proj = Mat4::from_cols_array(&[
+            f / aspect, 0.0, 0.0, 0.0,
+            0.0, f, 0.0, 0.0,
+            0.0, 0.0, 0.0, -1.0,
+            0.0, 0.0, near_pc, 0.0,
+        ]);
         proj * view
     }
 

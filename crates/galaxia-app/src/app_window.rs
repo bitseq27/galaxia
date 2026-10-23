@@ -183,20 +183,17 @@ impl App {
             return;
         };
         let frame_t0 = Instant::now();
+        use wgpu::CurrentSurfaceTexture as Cur;
         let frame = match surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            Cur::Success(t) | Cur::Suboptimal(t) => t,
+            Cur::Timeout | Cur::Occluded => return,
+            Cur::Outdated | Cur::Lost | Cur::Validation => {
                 let size = window.inner_size();
                 let mut c = config.clone();
                 c.width = size.width.max(2);
                 c.height = size.height.max(2);
                 surface.configure(&self.gpu.device, &c);
                 self.surface_config = Some(c);
-                return;
-            }
-            Err(wgpu::SurfaceError::Timeout) => return,
-            Err(e) => {
-                tracing::error!("surface error: {e:?}");
                 return;
             }
         };
@@ -249,6 +246,11 @@ impl App {
             exposure: self.cli.exposure,
             _pad0: 0.0,
             _pad1: 0.0,
+            _pad2: 0.0,
+            _pad3: 0.0,
+            _pad4: 0.0,
+            _pad5: 0.0,
+            _pad6: 0.0,
         };
         self.star_pass.write_uniforms(&self.gpu.queue, &uniforms);
 
@@ -256,9 +258,10 @@ impl App {
         let (clipped, platform_output) = if self.show_overlay {
             let state = self.egui_state.as_mut().unwrap();
             let raw_input = state.take_egui_input(&window);
-            let output = self.egui_ctx.run(raw_input, |ctx| self.overlay_ui(ctx));
+            let ctx = self.egui_ctx.clone();
+            let output = ctx.run_ui(raw_input, |ui| self.overlay_ui(ui));
             let ppp = output.pixels_per_point;
-            let clipped = self.egui_ctx.tessellate(output.shapes, ppp);
+            let clipped = ctx.tessellate(output.shapes, ppp);
             (clipped, output.platform_output)
         } else {
             (Vec::new(), Default::default())
@@ -314,16 +317,17 @@ impl App {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.timers.begin(&mut rpass, 0);
             self.timers.end(&mut rpass, 0);
             self.timers.begin(&mut rpass, 1);
             self.star_pass.draw(&mut rpass);
             self.timers.end(&mut rpass, 1);
-            // SAFETY: the encoder outlives the pass; forget_lifetime only
-            // detaches the borrow so egui-wgpu (which may internally re-open
-            // the pass for paint callbacks) can hold it.
-            let mut rpass_static = unsafe { rpass.forget_lifetime() };
+            // forget_lifetime detaches the encoder borrow so egui-wgpu can
+            // hold the pass (it may re-open it for paint callbacks). Safe:
+            // encoder and pass are locals here, dropped in declaration order.
+            let mut rpass_static = rpass.forget_lifetime();
             if self.show_overlay {
                 self.timers.begin(&mut rpass_static, 6);
                 self.egui_renderer
@@ -334,22 +338,25 @@ impl App {
             }
             drop(rpass_static);
         }
-        self.timers.resolve(&mut encoder);
+        let did_resolve = self.timers.resolve(&mut encoder);
 
         self.gpu.queue.submit(egui_paint_cmds.into_iter().chain([encoder.finish()]));
-        frame.present();
+        self.gpu.queue.present(frame);
         self.frames += 1;
+        self.timers.begin_readback(did_resolve);
 
         if let Some(raw) = self.timers.poll_results(&self.gpu.device) {
             self.timings = self.graph.fold_timings(&raw, self.ts_period_ns);
         }
     }
 
-    fn overlay_ui(&mut self, ctx: &egui::Context) {
-        egui::Window::new("galaxia — It.0 walking skeleton")
-            .resizable(true)
-            .default_width(340.0)
-            .show(ctx, |ui| {
+    fn overlay_ui(&mut self, root: &mut egui::Ui) {
+        let ctx = root.ctx().clone();
+        egui::Area::new(egui::Id::NULL)
+            .fixed_pos([10.0, 10.0])
+            .show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(330.0);
                 ui.heading(format!("{:.1} fps", self.fps_ema));
                 ui.label(format!(
                     "frame {:.2} ms (CPU-side EMA)  ·  GPU frame {:.2}",
@@ -409,7 +416,8 @@ impl App {
                 ui.small(
                     "WASD fly · Space/Shift up/down · drag mouse look · scroll speed · ` overlay · Q quit",
                 );
-                ui.small(galaxia_core::IT0_SINGLE_FRAME_SHORTCUT);
+                    ui.small(galaxia_core::IT0_SINGLE_FRAME_SHORTCUT);
+                });
             });
     }
 }
