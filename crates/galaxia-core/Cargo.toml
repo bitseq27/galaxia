@@ -1,0 +1,10 @@
+[package]
+name = "galaxia-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

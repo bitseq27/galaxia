@@ -1,0 +1,15 @@
+[package]
+name = "galaxia-render"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+galaxia-core = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+pollster = { workspace = true }
+image = { workspace = true }

@@ -1,0 +1,10 @@
+[build]
+# target-cpu=native is applied via RUSTFLAGS in CI/release scripts, not here,
+# so that sandbox/CI machines don't bake in wrong ISA assumptions.
+incremental = true
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = []
+
+[alias]
+xtask = "run --package galaxia-app --"

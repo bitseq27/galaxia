@@ -1,0 +1,31 @@
+[package]
+name = "galaxia-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "galaxia"
+path = "src/main.rs"
+
+[dependencies]
+galaxia-core = { workspace = true }
+galaxia-render = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+egui = { workspace = true }
+egui-winit = { workspace = true }
+egui-wgpu = { workspace = true }
+raw-window-handle = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+pollster = { workspace = true }
+image = { workspace = true }
+rand = { workspace = true }
+rand_xoshiro = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

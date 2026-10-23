@@ -1,0 +1,20 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Generated data artifacts (PLAN §4.1: data/ is gitignored)
+/data/
+/etl/raw/
+/etl/norm/*.csv
+!/etl/norm/orion_bright_g10_20k.csv
+/etl/build/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+uv.lock
+
+# OS
+.DS_Store
+Thumbs.db
