@@ -1,10 +1,10 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
-updated: 2026-10-23T22:15:00+08:00
-session: 4
-commit: "07df8e4"
+updated: 2026-10-24T01:35:00+08:00
+session: 5
+commit: "c219160"
 iteration: 1
-iteration_name: "real data (octree + streaming) — admission order closed"
+iteration_name: "real data (octree + streaming) — literature distances landed; 50k-cap truncation discovered"
 branch: main
 
 phase: prototype
@@ -13,70 +13,82 @@ last_green_ci: ""               # CI lands It.3; manual gates recorded in BUILDL
 
 working:
   - "headless render path: --screenshot/--bench/--frames (offscreen 2560x1440 -> PNG)"
-  - "star pass: 10,000 REAL Gaia DR3 stars (bright subset G<10, Orion cone) as additive billboards"
+  - "star pass: 10,000 REAL Gaia DR3 stars (bright subset G<10, Orion cone) as additive billboards; s005: loader consumes d_lit_pc — 86 literature-distance stars inside the 10k window, skips 123 -> 36"
   - "camera: f64 Sun-centred pc frame, exponential speed, damped rotation; orion_wide/orion_belt/betelgeuse/pleiades/t0_orion_m13 presets"
   - "frame-graph skeleton: 7 named pass slots with per-pass GPU timestamp wiring"
   - "WGSL hot-reload watcher with naga validate-before-swap (windowed path)"
   - "egui debug overlay (windowed path): fps, per-pass ms, provenance, camera state, T0 streaming stats (s003: resident/desired/pending/deferred/loads/evictions/MB)"
-  - "DAY0 data: smoke test OK, cone count 15,573,949, bright subset 17,494 rows committed"
-  - "unit tests 16/16 green; clippy clean"
-  - "T0 octree artifact re-baked post-reset: 8,579,343 stars / 315 leaves / 368 nodes (etl/build/t0/); fetch manifest 424/424, rows x32 == bytes exact"
+  - "DAY0 data: smoke test OK, cone count 15,573,949, bright subset 17,494 rows committed (s005: + d_lit_pc column, 120 filled)"
+  - "unit tests 18/18 green (s005: +Saiph literature-table +-10% gate, +loader-rescue direction/distance gate); clippy clean INCLUDING --all-targets (10 pre-existing style warnings fixed s005)"
+  - "T0 octree artifact: 8,580,530 stars / 315 leaves / 368 nodes / 412 partitions (etl/build/t0/); s005 +120 literature rows via n32_lit.bin (flags=6), re-bake exact-sum verified"
+  - "LITERATURE DISTANCE PIPELINE (s005): fetch_noplx_bright.py (TAP re-derive: 200 rows G<10 null/neg plx) -> fetch_literature_distances.py (SIMBAD sim-coo per star, <=1\" match with J2000->2016.0 pm propagation, tiers: adopted PLX_VALUE / >=3-sigma plx meas / non-paral distance; full provenance in origin col) -> bake_literature_bin.py (32 B records, flags bit1|bit2, round-trip verified) -> enrich_bright_csv.py (d_lit_pc col). Resolved 120/200; 80 listed unresolvable WITH reasons"
   - "galaxia-data: octree loader + frustum&LOD cull + LRU resident set + stream thread (s003: slot-release + dedupe fixes, see BUILDLOG)"
   - "--fly-test SECONDS,PC_PER_S harness: per-frame CSV (docs/build/flytest.csv), mid/end screenshots, G1 no-starve + G2 settle<=2s gates, exit code = verdict"
-  - "It.1 streaming gate PASS (sandbox proxy) at BOTH caps: 1.5M (G1 min 1,048,174; G2 0.607 s) and 3M (G1 min 1,468,472; G2 0.652 s), 60 s @ true 50 pc/s"
-  - "distance-priority leaf admission (s004): desired set sorted nearest-first before reconcile; capacity wedge gone (quadrant lit-frac spread 0.033 -> 0.005-0.006); 1.5M cap keeps 92% of 3M lit pixels"
-  - "windowed t0_* scenes now wire the octree (compile-only here; no display in sandbox)"
+  - "It.1 streaming gate PASS (sandbox proxy) at BOTH caps: 1.5M (G1 min 1,048,174; G2 0.607 s) and 3M (G1 min 1,468,472; G2 0.652 s), 60 s @ true 50 pc/s (s004 numbers; NOT re-run s005 — streaming mechanics untouched)"
+  - "distance-priority leaf admission (s004): capacity wedge gone (quadrant lit-frac spread 0.033 -> 0.005-0.006)"
+  - "windowed t0_* scenes wire the octree (compile-only here; no display in sandbox)"
+  - "skip-rate-vs-G curve measured (s005, unbiased 0.25% random_index sample, x400 within 0.18% of DAY0 count): etl/reports/skiprate_vs_g_s005.csv"
 
 not_working:
+  - "CRITICAL DATA DEBT (s005 discovery): ESA TAP silently caps results at 50k rows (sync AND async) — 102/424 fetched partitions are INCOMPLETE; fetched 11,876,797 vs true cone 15,573,949 => 3,697,152 rows (~24%) never fetched, densest galactic-plane partitions; T0 is ~2.6-2.7M bakeable stars short. Deterministic truncation = why 'archive-stable' totals matched exactly across s002-s005. Manifest annotated (truncated_at_cap + integrity_note), fetcher canary added (>=49,999). FIX = next_action"
+  - "80/200 bright no-plx stars remain unresolved: SIMBAD has no adopted parallax / >=3-sigma measurement / non-paral distance for them (76), no SIMBAD object <=1\" (3, nearest candidates listed), 1 beyond the 5 kpc pipeline cap — all listed with reasons in etl/reports/literature_unresolved_s005.csv"
+  - "VIZIER/CDS TAP + asu-tsv unreachable from sandbox (tap.cds DNS dead; cdsarc behind Anubis anti-bot; mirrors hang/timeout/login-wall) — bulk Hipparcos I/239 cross-match only possible on the target machine"
   - "windowed mode UNTESTED (sandbox has no display); first target-machine run = integration"
   - "GPU timestamps on llvmpipe report ~0; bench falls back to CPU wall time when <0.01 ms"
-  - "190 brightest cone stars (null parallax, e.g. Rigel) skipped — no distance source found yet; 3.3M no-parallax stars excluded from T0"
   - "lit_pixels content check threshold defeated by background encoding (cosmetic)"
   - "timer readback single-buffered: poll_results blocks (It.2 debt, see timing.rs)"
-  - "sandbox bench numbers NOT comparable to s002's host: this box measures orion_wide 42.7 ms vs 25.26 recorded (contention; sha256 CPU ref 365 MB/s is the cross-session normaliser)"
+  - "sandbox bench numbers host-noisy: orion_wide bimodal 39-75 ms under contention (quiet cluster == resume median 39.9, -7.5% vs recorded, inside gate); t0 cold-first-run is page-cache-bound (bench artifact); normalise with sha256 CPU ref (this box 340 MB/s)"
   - "shader m_app uses view-depth (clip.w) not euclidean D_cam: off-axis stars read <=0.46 mag bright vs CPU cull (skeleton tolerance; It.2 photometry supersedes)"
+  - "NOTE (s005 correction): 'Rigel G=2.08' in earlier notes is Saiph (kap Ori, 3011968416163350272) — DR3 Rigel (3206991473643150464) HAS plx 3.235 mas, G=6.60 VARIABLE (degraded photometry), and was never in the no-plx set"
 
 next_action: |
-  Close the biggest data debt: distances for the 190 brightest cone stars with
-  null/negative parallax (Rigel G=2.08 among them) and, if feasible in the
-  sandbox, a sampled fraction of the 3.3 M no-parallax cone rows. Cross-match
-  by position (<=1 arcsec) against a literature catalogue with distances
-  (Hipparcos / GCVS / SIMBAD radial+photometric entries via TAP or fixed
-  offline table committed to etl/norm/), provenance flag "literature"
-  (flags bit0 stays 0=real, add bit2=distance_from_literature), append to the
-  bright-subset CSV AND re-bake T0 (octree_build.py) so the stars render.
-  Gates: all 190 resolved or explicitly listed as unresolvable with reasons;
-  tests green (new test: Rigel present, distance within literature +/-10%);
-  screenshot orion_belt + betelgeuse scenes before/after. If the 3.3 M tail
-  proves infeasible here, record the measured skip-rate curve vs G in
-  BUILDLOG and defer to the target machine.
+  Session 006 — FIX THE 50k TRUNCATION (biggest data debt, discovered s005):
+  sub-partitioned re-fetch of the 102 truncated nside=32 partitions. Per
+  truncated pixel: fetch its 4 nside=64 children (each ~15-22k rows, under
+  cap; keep the >=49,999 canary — a child hitting it means nside=128),
+  CONCATENATE child records into the parent n32_<pix>.bin (order: child pixel
+  id ascending; rows x 32 == bytes exact), rewrite its manifest entry
+  (rows/skipped/baked_sha256, truncated_at_cap=false, children=[n64 ids]),
+  delete nothing else. Then: total fetched must equal 15,573,949 EXACTLY
+  (per-partition async COUNT spot-checks on >=3 densest); re-bake T0
+  (expect ~11.0-11.2M baked = fetched - noplx ~2.07M - far_cap ~2.46M;
+  leaves will grow past 315 — record new structure); re-run gates: t0 shots
+  (cap 1.5M + 3M), --fly-test 60,50 at both caps, benches median-of-3 with
+  sha256 ref. ONLY AFTER that: optional cheap wins — It.2 timer double-buffer
+  or windowed-path prep stay backlog.
+  Second-best alternative (if child fetches also truncate): ORDER BY
+  random_index pagination inside the partition. Do NOT 'fix' by raising the
+  cap request — ESA ignores MAXREC above 50k silently.
 
 next_iteration: 1
 next_iteration_scope: |
   It.1 REAL DATA: T0 ETL slice + Rust octree loader with async streaming and
-  LRU resident set. Gates: >=5 M stars visible (met: 3.0 M drawn at sandbox
-  cap, artifact 8.58 M); streaming keeps up at 50 pc/s (met, sandbox-proxy
-  form — target run pending); astrometry <1 arcsec vs Stellarium for 100 named
+  LRU resident set. Gates: >=5 M stars visible (met at artifact level:
+  8.58 M baked, 3.0 M drawn at sandbox cap — WILL BE ~11 M after the s006
+  truncation fix); streaming keeps up at 50 pc/s (met, sandbox-proxy form —
+  target run pending); astrometry <1 arcsec vs Stellarium for 100 named
   stars (target-machine). Retain the It.0 single-frame shortcut until It.3.
 
 blocked: []
 
 measurements_latest:
-  dataset: "T0-orion-cone (Gaia DR3 re-fetch 2026-10-23: 8,579,343 baked / 3,297,454 skipped; bright subset 17,494 for It.0 scenes)"
+  dataset: "T0-orion-cone (Gaia DR3 re-fetch 2026-10-23/24: 8,580,530 baked = 8,580,410 + 120 literature / 3,296,387 skipped; INCOMPLETE — 102/424 partitions truncated at the 50k cap, true cone 15,573,949; bright subset 17,494 + d_lit_pc column)"
   stars_visible_ceiling_60fps: 0        # not measurable on llvmpipe
   star_raster_10M_1440p_ms: null        # budget 5.5 — It.2
   volumetrics_ms: null                  # budget 2.2 — It.4
   glare_ms: null                        # budget 1.5 — It.2
   fsr2_ms: null                         # budget 1.2 — It.2
-  frame_ms_orion_wide: 42.683           # CPU wall, THIS sandbox host (contended); s002 host did 25.26 — compare via sha256 ref, not raw ms
-  fps_orion_wide: 23
-  frame_ms_t0_orion_m13: 574.904        # median-3; fill-bound llvmpipe, post m_app fix
-  flytest_gate: "PASS at 1.5M and 3M caps (G1 min-resident 1.05M/1.47M @50 pc/s; G2 settle 0.61-0.65 s)"
-  wedge_quadrant_spread: 0.006            # s002 leaf-id order: 0.033 — admission fix verified
+  frame_ms_orion_wide: 47.9             # median-8 post-d_lit_pc; bimodal contention, quiet cluster 39.3-42.5 == resume median 39.9 (-7.5% vs 42.683, inside gate)
+  fps_orion_wide: 21
+  frame_ms_t0_orion_m13: 357.2          # warm median-7 post-literature-rebake; cold-first-run excluded (page-cache bench artifact); s003's 574.9 was contention-inflated
+  flytest_gate: "PASS at 1.5M and 3M caps (s004; not re-run s005 — streaming untouched; MUST re-run after the s006 re-fetch)"
+  wedge_quadrant_spread: 0.006          # s004; unchanged by +120 stars
   peak_vram_gb: 0.0                     # llvmpipe: host RAM, unmeasured
-  resident_leaves: 116
+  resident_leaves: 60                   # static sun view at 1.5M cap (s005 run); 103-116 in fly runs
   stream_mb_s: 32                       # t0 fill; fly-test sustained 4.2 MB/s wall avg incl. churn 257.5 MB
-  free_nvme_gb: 6                       # sandbox disk; target machine = 200 (HARD LIMIT)
+  free_nvme_gb: 7                       # sandbox disk; target machine = 200 (HARD LIMIT)
+  noplx_skiprate_curve: "~0% <G13 -> 2.4% G14-15 -> 4.8% G17-18 -> 12.9% G18-19 -> 24.8% G19-20 (0.25% sample x400); far_cap class ~2.46M rows; exact G<10: 200/17,494"
+  literature_resolved: "120/200 (80 listed unresolvable with reasons)"
 
 environment:
   gpu: "llvmpipe (LLVM 15.0.6) software raster — sandbox; TARGET is TITAN RTX/Vulkan"
@@ -88,16 +100,20 @@ environment:
   threads: 2
   sandbox_rules:
     - "build with cargo -j 1 (default -j 2 OOM-kills rustc on naga at 1 GB)"
-    - "background processes DO NOT survive between tool calls — run long jobs as resumable timeout chunks"
+    - "background processes DO NOT survive between tool calls — run long jobs as resumable timeout chunks (~640 s proven)"
     - "apt: deb.debian.org (image ships throttled aliyun mirror)"
-    - "bench: median-of-3, nothing concurrent; normalise across hosts with sha256 CPU ref (this box: 365 MB/s)"
+    - "bench: median-of-3, nothing concurrent; normalise across hosts with sha256 CPU ref (this box: 340 MB/s); t0 first-run-after-idle is page-cache-bound — discard"
     - "python deps live in /opt/arena-python: numpy, healpy, pillow (pip install on reset)"
+    - "network: CDS TAP/VizieR blocked (DNS/Anubis); SIMBAD REST (sim-coo/sim-script) WORKS; ESA TAP works but caps ALL results at 50k rows"
+    - "ADQL: no CASE expressions; GROUP BY refuses expressions (strict 2.0 column refs) — aggregate client-side from samples instead"
 
 adrs:
   - "0004-orion-prototype-region"
   - "0010-sandbox-gles-build"
 
 datasets:
-  gaia: { release: DR3, epoch: 2016.0, rows: 8579343, accessed: "2026-10-23" }
+  gaia: { release: DR3, epoch: 2016.0, rows: 8580530, accessed: "2026-10-23" }
   gaia_count_orion_cone_g20: 15573949   # async job b3a87cff-ceb8-11f1-9d98-bc97e148b76b-O
-  fetch_manifest_partitions: 424        # rows identical to s002 (11,876,797 fetched); 911 rows moved baked<->skipped
+  fetch_manifest_partitions: 424        # 102 TRUNCATED at 50k cap (s005) — fetched 11,876,797 = 76% of true cone
+  literature: { source: "SIMBAD sim-coo (compiled literature parallaxes/distances)", rows_resolved: 120, rows_unresolved: 80, accessed: "2026-10-23", table: "etl/norm/literature_distances.csv" }
+  skiprate_sample: { job: "6cf2baf2-cf04-11f1-9d98-bc97e148b76b-O", rows: 38863, mod: 400, accessed: "2026-10-23" }
