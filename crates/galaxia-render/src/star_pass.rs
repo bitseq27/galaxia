@@ -278,6 +278,51 @@ impl StarPass {
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(u));
     }
 
+    /// Grow the star storage buffer to hold `records` stars (rebinds).
+    pub fn ensure_capacity(&mut self, records: u32) {
+        let needed = records as u64 * std::mem::size_of::<StarGpu>() as u64;
+        if needed <= self.star_buf.size() {
+            return;
+        }
+        self.star_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("star-buffer"),
+            size: needed,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("star-pass-bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.star_buf.as_entire_binding(),
+                },
+            ],
+        });
+    }
+
+    /// Upload stars at a record offset (leaf slot streaming, It.1).
+    pub fn upload_at(&self, queue: &wgpu::Queue, offset_records: u32, stars: &[StarGpu]) {
+        let off = offset_records as u64 * std::mem::size_of::<StarGpu>() as u64;
+        queue.write_buffer(&self.star_buf, off, bytemuck::cast_slice(stars));
+    }
+
+    /// Draw several instance ranges (resident leaf slots).
+    pub fn draw_ranges<'a>(&'a self, rpass: &mut wgpu::RenderPass<'a>, ranges: &[(u32, u32)]) {
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.bind_group, &[]);
+        for &(off, count) in ranges {
+            if count > 0 {
+                rpass.draw(0..6, off..off + count);
+            }
+        }
+    }
+
     pub fn draw<'a>(&'a self, rpass: &mut wgpu::RenderPass<'a>) {
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.bind_group, &[]);

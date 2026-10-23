@@ -9,6 +9,7 @@ mod app_window;
 mod camera;
 mod headless;
 mod input;
+mod octree_scene;
 mod star_data;
 
 use anyhow::Result;
@@ -57,6 +58,14 @@ pub struct Cli {
     /// Exposure multiplier for the overlay/screenshot.
     #[arg(long, default_value_t = 1.0)]
     pub exposure: f32,
+
+    /// Limiting magnitude for the octree LOD cull (It.1 scenes).
+    #[arg(long, default_value_t = 13.0)]
+    pub m0: f32,
+
+    /// GPU resident-set capacity in stars (sandbox default below target's).
+    #[arg(long, default_value_t = 1_500_000)]
+    pub resident_cap: u32,
 
     /// Build-log session id stamped into measurements rows.
     #[arg(long, default_value = "002")]

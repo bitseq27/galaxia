@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/galaxia-core",
     "crates/galaxia-render",
+    "crates/galaxia-data",
     "crates/galaxia-app",
 ]
 
@@ -40,6 +41,7 @@ toml = "1.1.8"
 
 galaxia-core = { path = "crates/galaxia-core" }
 galaxia-render = { path = "crates/galaxia-render", default-features = false }
+galaxia-data = { path = "crates/galaxia-data" }
 
 [profile.release]
 lto = "thin"

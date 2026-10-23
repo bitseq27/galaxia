@@ -38,7 +38,17 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let mut watcher = ShaderWatcher::new(&cli.shader)?;
     let source = watcher.changed().unwrap_or_else(|| std::fs::read_to_string(&cli.shader).unwrap());
     let mut star_pass = StarPass::new(&gpu.device, &source)?;
+    let use_t0 = cli.scene.starts_with("t0")
+        && std::path::Path::new("etl/build/t0/tree_meta.json").exists();
+    let mut octree: Option<crate::octree_scene::OctreeScene> = None;
+    let mut octree_stats: Option<crate::octree_scene::FrameStats> = None;
+    if use_t0 {
+        let tree = galaxia_data::T0Tree::load(std::path::Path::new("etl/build/t0"))?;
+        star_pass.ensure_capacity(cli.resident_cap);
+        octree = Some(crate::octree_scene::OctreeScene::new(tree, cli.resident_cap)?);
+    }
 
+    // Octree (It.1) scenes: t0_* stream from the baked T0 artifact set.
     // Stars.
     let src = star_data::load_stars(cli.stars_csv.as_deref(), &cli.scene);
     tracing::info!(stars = src.stars.len(), provenance = %src.provenance, "star source");
@@ -55,6 +65,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
     let ts_period = gpu.queue.get_timestamp_period(); // ns per tick
 
     let cam = camera_for_scene(&cli.scene);
+    let mut osc_gpu_ranges: Vec<(u32, u32)> = Vec::new();
     let aspect = cli.width as f32 / cli.height as f32;
     let px_scale = 2.0 * (FOV_Y_RAD * 0.5).tan() / cli.height as f32;
 
@@ -116,7 +127,17 @@ pub async fn run(cli: &Cli) -> Result<()> {
             timers.begin(&mut rpass, 0);
             timers.end(&mut rpass, 0);
             timers.begin(&mut rpass, 1);
-            star_pass.draw(&mut rpass);
+            if let Some(osc) = octree.as_mut() {
+                let vp = glam::Mat4::from_cols_array_2d(&uniforms.view_proj);
+                let stats =
+                    osc.frame(cam.pos_pc, &vp, cli.m0, &mut star_pass, &gpu.queue);
+                osc_gpu_ranges.clear();
+                osc_gpu_ranges.extend_from_slice(osc.draw_ranges());
+                octree_stats = Some(stats);
+                star_pass.draw_ranges(&mut rpass, &osc_gpu_ranges);
+            } else {
+                star_pass.draw(&mut rpass);
+            }
             timers.end(&mut rpass, 1);
         }
         target.encode_copy(&mut encoder);
@@ -155,6 +176,18 @@ pub async fn run(cli: &Cli) -> Result<()> {
     // GPU timestamps on software rasterisers (llvmpipe) can report ~0 and
     // produce absurd fps; treat anything < 0.01 ms as invalid and fall back
     // to CPU wall time. On real GPUs the GPU number is authoritative.
+    let visible = octree_stats.as_ref().map(|s| s.drawn as usize).unwrap_or(src.stars.len());
+    if let Some(s) = &octree_stats {
+        tracing::info!(
+            drawn = s.drawn,
+            resident = s.resident_stars,
+            leaves = s.resident_leaves,
+            pending = s.pending,
+            loads = s.loads,
+            mb = s.mb_streamed,
+            "octree scene final frame"
+        );
+    }
     let valid = |v: Option<f32>| v.filter(|x| *x >= 0.01);
     let stars_ms = valid(last_gpu.per_pass.get(1).copied().flatten());
     let frame_ms = valid(last_gpu.frame_gpu_ms)
@@ -171,7 +204,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
         println!(
             "{now},{sess},0,{commit},{scene},{stars},{star_ms},,,,{frame_ms},{fps},,,,sandbox lavapipe software raster — NOT Titan RTX numbers; It.0 skeleton point stars",
             scene = cli.scene,
-            stars = src.stars.len(),
+            stars = visible,
             star_ms = stars_ms.map(|v| format!("{v:.3}")).unwrap_or_default(),
             frame_ms = format!("{frame_ms:.3}"),
             fps = format!("{fps:.1}"),

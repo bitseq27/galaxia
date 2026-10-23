@@ -34,7 +34,7 @@ REC = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("mag", "<f4"),
                 ("r", "<f4"), ("g", "<f4"), ("b", "<f4"), ("flags", "<u4")])
 NODE = np.dtype([("morton", "<u8"), ("depth", "<u4"), ("flags", "<u4"),
                  ("count", "<u4"), ("leaf_id", "<u4"), ("brightest", "<f4"),
-                 ("cx", "<f4"), ("cy", "<f4"), ("cz", "<f4"), ("radius", "<f4"),
+                 ("cx", "<f4"), ("cy", "<f4"), ("cz", "<f4"), ("radius", "<f4"), ("pad", "<u4"),
                  ("children", "<i4", (8,))])
 
 
@@ -232,7 +232,7 @@ def main():
                     kids[k] = index[kk]
         tbl[i] = (code, d, 1 if nd["is_leaf"] else 0, nd["count"],
                   nd["leaf"] if nd["is_leaf"] else 0, nd["brightest"],
-                  c[0], c[1], c[2], rad, kids)
+                  c[0], c[1], c[2], rad, 0, kids)
 
     # ── write artifacts ─────────────────────────────────────────────────────
     stars_path = os.path.join(OUT, "stars.bin")

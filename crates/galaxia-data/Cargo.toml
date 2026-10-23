@@ -1,0 +1,14 @@
+[package]
+name = "galaxia-data"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+galaxia-core = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+bytemuck = { workspace = true }
+glam = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
