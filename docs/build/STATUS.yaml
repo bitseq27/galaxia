@@ -1,10 +1,10 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
-updated: 2026-10-23T21:12:00+08:00
-session: 3
-commit: "53eb59f"
+updated: 2026-10-23T22:15:00+08:00
+session: 4
+commit: "07df8e4"
 iteration: 1
-iteration_name: "real data (octree + streaming) — streaming gate closed"
+iteration_name: "real data (octree + streaming) — admission order closed"
 branch: main
 
 phase: prototype
@@ -23,7 +23,8 @@ working:
   - "T0 octree artifact re-baked post-reset: 8,579,343 stars / 315 leaves / 368 nodes (etl/build/t0/); fetch manifest 424/424, rows x32 == bytes exact"
   - "galaxia-data: octree loader + frustum&LOD cull + LRU resident set + stream thread (s003: slot-release + dedupe fixes, see BUILDLOG)"
   - "--fly-test SECONDS,PC_PER_S harness: per-frame CSV (docs/build/flytest.csv), mid/end screenshots, G1 no-starve + G2 settle<=2s gates, exit code = verdict"
-  - "It.1 streaming gate PASS (sandbox proxy): 60 s @ true 50 pc/s (3022 pc), G1 min 1,468,472 residents, G2 settle 0.52-0.65 s, deferred<=4"
+  - "It.1 streaming gate PASS (sandbox proxy) at BOTH caps: 1.5M (G1 min 1,048,174; G2 0.607 s) and 3M (G1 min 1,468,472; G2 0.652 s), 60 s @ true 50 pc/s"
+  - "distance-priority leaf admission (s004): desired set sorted nearest-first before reconcile; capacity wedge gone (quadrant lit-frac spread 0.033 -> 0.005-0.006); 1.5M cap keeps 92% of 3M lit pixels"
   - "windowed t0_* scenes now wire the octree (compile-only here; no display in sandbox)"
 
 not_working:
@@ -36,15 +37,19 @@ not_working:
   - "shader m_app uses view-depth (clip.w) not euclidean D_cam: off-axis stars read <=0.46 mag bright vs CPU cull (skeleton tolerance; It.2 photometry supersedes)"
 
 next_action: |
-  Distance-priority leaf admission in ResidentSet::reconcile + OctreeScene:
-  replace stable leaf-id fill order with nearest-first (leaf centroid distance
-  to camera; T0Tree nodes already carry centres). The leaf-id order is what
-  draws the capacity wedge at caps below the desired set (s002 shot) and what
-  leaves arbitrary deferred tails now. Then re-run --fly-test 60,50 at
-  --resident-cap 1500000 AND 3000000: gate must stay PASS and the wedge must
-  disappear from a fresh t0_orion_m13 --screenshot (compare vs
-  2026-10-23-iter1-s003-t0-orion-m13.png). Record flytest.csv + shots + a
-  measurements row.
+  Close the biggest data debt: distances for the 190 brightest cone stars with
+  null/negative parallax (Rigel G=2.08 among them) and, if feasible in the
+  sandbox, a sampled fraction of the 3.3 M no-parallax cone rows. Cross-match
+  by position (<=1 arcsec) against a literature catalogue with distances
+  (Hipparcos / GCVS / SIMBAD radial+photometric entries via TAP or fixed
+  offline table committed to etl/norm/), provenance flag "literature"
+  (flags bit0 stays 0=real, add bit2=distance_from_literature), append to the
+  bright-subset CSV AND re-bake T0 (octree_build.py) so the stars render.
+  Gates: all 190 resolved or explicitly listed as unresolvable with reasons;
+  tests green (new test: Rigel present, distance within literature +/-10%);
+  screenshot orion_belt + betelgeuse scenes before/after. If the 3.3 M tail
+  proves infeasible here, record the measured skip-rate curve vs G in
+  BUILDLOG and defer to the target machine.
 
 next_iteration: 1
 next_iteration_scope: |
@@ -66,7 +71,8 @@ measurements_latest:
   frame_ms_orion_wide: 42.683           # CPU wall, THIS sandbox host (contended); s002 host did 25.26 — compare via sha256 ref, not raw ms
   fps_orion_wide: 23
   frame_ms_t0_orion_m13: 574.904        # median-3; fill-bound llvmpipe, post m_app fix
-  flytest_gate: "PASS (G1 min-resident 1.47M @50 pc/s; G2 settle 0.52-0.65 s)"
+  flytest_gate: "PASS at 1.5M and 3M caps (G1 min-resident 1.05M/1.47M @50 pc/s; G2 settle 0.61-0.65 s)"
+  wedge_quadrant_spread: 0.006            # s002 leaf-id order: 0.033 — admission fix verified
   peak_vram_gb: 0.0                     # llvmpipe: host RAM, unmeasured
   resident_leaves: 116
   stream_mb_s: 32                       # t0 fill; fly-test sustained 4.2 MB/s wall avg incl. churn 257.5 MB

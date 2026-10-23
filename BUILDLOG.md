@@ -433,3 +433,68 @@ diagonal missing wedge (compare vs
 + shots + a measurements row; update STATUS.yaml.
 
 **Commit:** `53eb59f`
+
+---
+
+## Session 004 — 2026-10-23 — Iteration 1 (distance-priority admission)
+
+**Goal:** Execute session 003's `Next`: distance-priority leaf admission
+(nearest-first fill order), re-run the streaming gate at 1.5 M and 3 M caps,
+prove the capacity wedge is gone.
+
+**Started from:** commit `42e11f4`. Sandbox NOT reset this time (toolchain,
+`target/`, `etl/build/` all survived) — resume protocol steps 1-6 were cheap:
+tests 16/16, tree clean.
+
+**Done:**
+- `OctreeScene` now builds `leaf_centers` (one pass over leaf node records at
+  init) and sorts the culled `desired` set nearest-first (length_sq, leaf-id
+  tie-break) before `reconcile` — reconcile fills capacity in `desired` order,
+  so fill order = distance order. Evict-only-undesired policy untouched.
+- Gate re-runs (60 s @ true 50 pc/s): **PASS at both caps**.
+  1.5 M: 91 flight frames, 3,028 pc, G1 min 1,048,174 residents, max pending
+  12, deferred ≤5, 255.5 MB / 297 loads / 258 evictions, settle 0.607 s.
+  3 M: 51 frames, 3,002 pc, G1 min 1,468,472, max pending 16, deferred ≤4,
+  274.4 MB / 313 / 272, settle 0.652 s. Per-cap CSVs kept
+  (`docs/build/flytest-cap1500000.csv`, `-cap3000000.csv`).
+- Wedge check: fresh `t0_orion_m13 --screenshot` at 1.5 M cap = full-disc
+  coverage; quadrant lit-fraction spread **0.006** vs **0.033** for the s002
+  leaf-id-order shot; 1.5 M keeps 21.4 k of 3 M's 23.2 k lit pixels (92 %) —
+  the tail is now the farthest shells (graceful thinning), not sky regions.
+- Screenshots: `docs/build/shots/2026-10-23-iter1-s004-flytest-cap1p5m-{mid,end}.png`,
+  `…-cap3m-{mid,end}.png`, `…-s004-t0-m13-cap1p5m.png`, `…-cap3m.png`.
+- Tests 16/16, clippy clean (after `length_squared` vs `length_sq` glam naming).
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| G1/G2 @1.5 M cap | n/a | **PASS / 0.607 s** | >0 / ≤2 s ✔ |
+| G1/G2 @3 M cap | PASS / 0.65 s (s003) | **PASS / 0.652 s** | ✔ regression-free |
+| quadrant anisotropy (wedge metric) | 0.033 (leaf-id) | **0.005-0.006** | uniform ✔ |
+| lit px @1.5 M vs @3 M (sun view) | wedge = hard void | **21.4 k vs 23.2 k (92 %)** | graceful ✔ |
+
+**Blockers hit:**
+- None functional. Note: `grep "drawn="` chain aborted once on a tracing-line
+  race (cosmetic); re-runs clean.
+
+**Not done / discovered work:**
+- Residual faint diagonal hatching at 1.5 M (left of disc) = tiling of the big
+  NEAR Morton cells (near-volume leaves are physically huge at ~10⁵ stars/leaf
+  because local density is low). Cosmetic in sun view; It.2 photometry/HDR
+  will change the look anyway. Recorded, not chased.
+- 3 M static run: 103 leaves / 2,999,946 stars vs s003's 116 / 2,999,869 —
+  nearest-first packs more stars per leaf; cap saturates either way.
+- Data debts unchanged: 190 bright null-parallax stars, 3.3 M no-parallax tail,
+  single-buffered timer readback, windowed path untested on a display.
+
+**Screenshot:** `docs/build/shots/2026-10-23-iter1-s004-t0-m13-cap1p5m.png`
+
+**Next (precise):** Literature distances for the 190 bright null-parallax cone
+stars (see STATUS.yaml next_action): position cross-match ≤1″ vs a committed
+offline table (HIP/GCVS/SIMBAD photometric distances), provenance bit2
+"distance_from_literature", append to bright-subset CSV, re-bake T0, test
+(Rigel present, ±10 % of literature), screenshots orion_belt/betelgeuse
+before/after. If the 3.3 M faint tail is infeasible in-sandbox, record the
+skip-rate-vs-G curve and defer.
+
+**Commit:** `07df8e4`
