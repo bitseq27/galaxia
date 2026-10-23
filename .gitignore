@@ -7,7 +7,9 @@
 /etl/raw/
 /etl/norm/*.csv
 !/etl/norm/orion_bright_g10_20k.csv
+!/etl/norm/literature_distances.csv
 /etl/build/
+/etl/reports/simbad_cache/
 
 # Python
 __pycache__/
