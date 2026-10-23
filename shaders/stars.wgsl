@@ -71,8 +71,19 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     let center_clip = u.view_proj * vec4(s.pos_pc, 1.0);
     let dist = max(center_clip.w, 1e-4);
 
-    let gate = gated(s.mag);
-    let r_world = gate * dist * star_radius_px(s.mag) * u.px_scale;
+    // Apparent magnitude AT THE CAMERA (session 003 fix): the CPU LOD cull
+    // admits leaves by m_cam = G + 5·log10(D_cam/D_sun), but this gate used
+    // the CATALOG magnitude — so once the camera left the Sun, nearby faint
+    // stars (bright from here) were zeroed and fly-through frames went black.
+    // D_sun = length(pos_pc); log10(x) = log2(x)·0.30103. At the Sun view
+    // dist == D_sun and m_app == mag exactly (origin shots unchanged).
+    // (dist is view-depth, not euclidean; frustum-edge stars read marginally
+    // closer than the CPU cull thinks — skeleton tolerance, noted for It.2.)
+    let d_sun = max(length(s.pos_pc), 1e-4);
+    let m_app = s.mag + 5.0 * (log2(dist / d_sun) * 0.30102999566);
+
+    let gate = gated(m_app);
+    let r_world = gate * dist * star_radius_px(m_app) * u.px_scale;
     let world_offset = u.cam_right * (corner.x * r_world) + u.cam_up * (corner.y * r_world);
 
     var out: VsOut;
@@ -84,7 +95,8 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     // blending into white fog once >10^5 stars overlap (session 002 finding).
     // Faint stars contribute ~their flux; clusters of them integrate into a
     // milky glow instead of clipping. HDR + tonemap (It.2) replaces this curve.
-    out.bright = gate * clamp(pow(10.0, -0.4 * (s.mag - 6.0)), 0.0, 14.0) * u.exposure;
+    // Brightness is flux at the CAMERA (m_app), not at the Sun (s003 fix).
+    out.bright = gate * clamp(pow(10.0, -0.4 * (m_app - 6.0)), 0.0, 14.0) * u.exposure;
     return out;
 }
 
