@@ -50,8 +50,7 @@ impl OctreeScene {
         let fh = tree.worker_handle()?;
         let leaves = std::sync::Arc::new(tree.leaves.clone());
         let worker = StreamWorker::spawn(leaves, fh);
-        let mut free = Vec::new();
-        free.push((0, gpu_cap));
+        let free = vec![(0, gpu_cap)];
         // Leaf centroids live on the leaf NODE records (LeafIdx is disk-layout
         // only); one pass over <=~10^3 nodes at init, never per frame.
         let mut leaf_centers = vec![DVec3::ZERO; tree.leaves.len()];

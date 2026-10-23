@@ -60,6 +60,10 @@ pub struct T0Tree {
     pub meta: TreeMeta,
     pub nodes: Vec<NodeRecord>,
     pub leaves: Vec<LeafIdx>,
+    /// Load-time validation handle for stars.bin — proves the payload opens
+    /// before the tree is accepted; the stream worker uses independent
+    /// handles (`worker_handle`). Kept open deliberately, never read here.
+    #[allow(dead_code)]
     stars: File,
     pub path: std::path::PathBuf,
 }
@@ -189,7 +193,7 @@ mod tests {
     /// named stars runs on the target machine (PLAN §17.1).
     #[test]
     fn quantisation_angular_error_under_one_arcsec() {
-        let one_arcsec_rad = 4.848_136_8e-6;
+        let one_arcsec_rad = 4.848_137e-6_f32; // 1" in rad, f32-representable
         for d_pc in [10.0_f32, 137.0, 400.0, 1500.0, 5000.0] {
             let ulp = (d_pc * 2.0f32.powi(-23)).abs(); // f32 spacing at d
             let err_rad = (ulp * 0.5) / d_pc;

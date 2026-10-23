@@ -202,13 +202,13 @@ pub async fn run(cli: &Cli) -> Result<()> {
         // volumetrics_ms,glare_ms,post_ms,frame_ms_total,fps,peak_vram_gb,
         // resident_leaves,stream_mb_s,notes
         let now = humantime_now();
+        let star_ms = stars_ms.map(|v| format!("{v:.3}")).unwrap_or_default();
+        let frame_ms = format!("{frame_ms:.3}");
+        let fps = format!("{fps:.1}");
         println!(
             "{now},{sess},0,{commit},{scene},{stars},{star_ms},,,,{frame_ms},{fps},,,,sandbox lavapipe software raster — NOT Titan RTX numbers; It.0 skeleton point stars",
             scene = cli.scene,
             stars = visible,
-            star_ms = stars_ms.map(|v| format!("{v:.3}")).unwrap_or_default(),
-            frame_ms = format!("{frame_ms:.3}"),
-            fps = format!("{fps:.1}"),
             sess = cli.session,
         );
     }

@@ -74,7 +74,7 @@ impl OffscreenTarget {
         let mut rgba = slice.get_mapped_range()?.to_vec();
         self.read_buf.unmap();
         // BGRA → RGBA
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
         }
         Ok(rgba)

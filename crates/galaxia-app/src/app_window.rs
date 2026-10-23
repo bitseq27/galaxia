@@ -97,7 +97,6 @@ impl App {
         if cli.scene.starts_with("t0") {
             if std::path::Path::new("etl/build/t0/tree_meta.json").exists() {
                 match galaxia_data::T0Tree::load(std::path::Path::new("etl/build/t0"))
-                    .map_err(anyhow::Error::from)
                     .and_then(|tree| {
                         star_pass.ensure_capacity(cli.resident_cap);
                         OctreeScene::new(tree, cli.resident_cap)
