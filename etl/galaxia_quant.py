@@ -4,7 +4,13 @@ Layout (little-endian, 32 bytes):
     x, y, z : f32  pc, Sun-centred ICRS equatorial (It.0 shortcut frame)
     mag     : f32  Gaia G
     r, g, b : f32  crude linear colour from bp_rp (Harre-Heller chain = It.2)
-    flags   : u32  bit0 provenance (0 = gaia_dr3_real), bit1 = has parallax
+    flags   : u32  bit0 provenance (0 = gaia_dr3_real, 1 = synthetic)
+                   bit1 NO usable Gaia DR3 parallax (distance not from DR3 plx;
+                        s005 doc fix: the field was originally documented as
+                        "has parallax" but always implemented as its inverse —
+                        first exercised by the s005 literature rows)
+                   bit2 distance_from_literature (s005: SIMBAD/HIP compiled
+                        distance; see etl/norm/literature_distances.csv origin)
 
 The authoritative §8.4 GPU schema (Morton keys, LOD metadata, provenance enum)
 lands with the It.1 octree builder; this exists so the DAY-0 fetch can bake and
@@ -14,6 +20,9 @@ import math
 import struct
 
 AU_IN_PC = 206264.8062470964  # unused here (positions stored in pc) — kept for parity
+
+FLAG_NO_GAIA_PLX = 2
+FLAG_DIST_FROM_LITERATURE = 4
 
 
 def bp_rp_to_rgb_crude(bp_rp):
@@ -36,7 +45,7 @@ def bp_rp_to_rgb_crude(bp_rp):
     return anchors[-1][1]
 
 
-def record(ra_deg, dec_deg, dist_pc, mag, bp_rp, has_parallax):
+def record(ra_deg, dec_deg, dist_pc, mag, bp_rp, has_parallax, extra_flags=0):
     ra = math.radians(ra_deg)
     dec = math.radians(dec_deg)
     cd = math.cos(dec)
@@ -44,7 +53,7 @@ def record(ra_deg, dec_deg, dist_pc, mag, bp_rp, has_parallax):
     y = dist_pc * cd * math.sin(ra)
     z = dist_pc * math.sin(dec)
     r, g, b = bp_rp_to_rgb_crude(bp_rp)
-    flags = 0 | (0 if has_parallax else 2)
+    flags = extra_flags | (0 if has_parallax else FLAG_NO_GAIA_PLX)
     return struct.pack("<4f3fI", x, y, z, mag, r, g, b, flags)
 
 

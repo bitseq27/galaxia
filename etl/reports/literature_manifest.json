@@ -1,0 +1,21 @@
+{
+ "bin": "etl/build/n32_lit.bin",
+ "rows": 120,
+ "bytes": 3840,
+ "missing_photometry_rows": 0,
+ "flags_value": 6,
+ "flags_semantics": "bit0=0 real, bit1=no usable Gaia DR3 parallax, bit2=distance_from_literature",
+ "inputs": {
+  "literature_distances.csv": {
+   "sha256": "f50e0ae9b36800d968956b170a6b60a10d53a2f774888687b60bf271ee26ec2a",
+   "rows": 120
+  },
+  "noplx_bright_g10_s005.csv": {
+   "sha256": "f57ac22b1ab77f8c59cb1a3d35770c043665afad981adb45a1b0cab0920ebf3f",
+   "rows": 200
+  }
+ },
+ "baked_sha256": "c68b0e672e3654ebb6c4680aaafa1339e7196e91f1217ef83f713c78423b09e5",
+ "roundtrip_max_rel_distance_error": 5.100001557014398e-08,
+ "baked_at": "2026-10-23T16:29:52Z"
+}
