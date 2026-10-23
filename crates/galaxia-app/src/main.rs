@@ -7,6 +7,7 @@
 
 mod app_window;
 mod camera;
+mod fly_test;
 mod headless;
 mod input;
 mod octree_scene;
@@ -68,8 +69,13 @@ pub struct Cli {
     pub resident_cap: u32,
 
     /// Build-log session id stamped into measurements rows.
-    #[arg(long, default_value = "002")]
+    #[arg(long, default_value = "003")]
     pub session: String,
+
+    /// It.1 streaming gate: fly along +view for SECONDS at PC_PER_S, log
+    /// per-frame streaming stats to docs/build/flytest.csv (implies headless).
+    #[arg(long, value_name = "SECONDS,PC_PER_S")]
+    pub fly_test: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -81,7 +87,9 @@ fn main() -> Result<()> {
         )
         .init();
 
-    if cli.bench || cli.headless || cli.screenshot.is_some() {
+    if cli.fly_test.is_some() {
+        pollster::block_on(fly_test::run(&cli))
+    } else if cli.bench || cli.headless || cli.screenshot.is_some() {
         pollster::block_on(headless::run(&cli))
     } else {
         pollster::block_on(app_window::run(&cli))

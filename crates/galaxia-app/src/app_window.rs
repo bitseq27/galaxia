@@ -4,6 +4,7 @@
 
 use crate::camera::Camera;
 use crate::input::{self, Action, MoveState, LOOK_SENS, SPEED_STEP};
+use crate::octree_scene::{FrameStats, OctreeScene};
 use crate::star_data;
 use crate::Cli;
 use anyhow::Result;
@@ -60,6 +61,10 @@ struct App {
     reload_errors: Vec<String>,
     frames: u64,
     m0_uniform: f32,
+    /// It.1: t0_* scenes stream from the baked octree (None → CSV star path).
+    octree: Option<OctreeScene>,
+    osc_stats: Option<FrameStats>,
+    osc_ranges: Vec<(u32, u32)>,
 }
 
 impl App {
@@ -84,6 +89,29 @@ impl App {
         let ts_period_ns = gpu.queue.get_timestamp_period();
 
         let m0_uniform = if cli.scene.starts_with("t0") { cli.m0 } else { 99.0 };
+        // It.1 octree wiring (mirrors headless.rs): t0_* scenes stream leaves
+        // from etl/build/t0 through the resident set; anything else keeps the
+        // It.0 CSV path. Missing artifact = loud warning, not a hard failure —
+        // the window still opens on CSV stars (never brick the app for data).
+        let mut octree = None;
+        if cli.scene.starts_with("t0") {
+            if std::path::Path::new("etl/build/t0/tree_meta.json").exists() {
+                match galaxia_data::T0Tree::load(std::path::Path::new("etl/build/t0"))
+                    .map_err(anyhow::Error::from)
+                    .and_then(|tree| {
+                        star_pass.ensure_capacity(cli.resident_cap);
+                        OctreeScene::new(tree, cli.resident_cap)
+                    }) {
+                    Ok(scene) => {
+                        tracing::info!(cap = cli.resident_cap, "T0 octree streaming active");
+                        octree = Some(scene);
+                    }
+                    Err(e) => tracing::error!("T0 octree init failed ({e}); CSV stars only"),
+                }
+            } else {
+                tracing::warn!("t0 scene requested but etl/build/t0 is missing — CSV stars only");
+            }
+        }
         Ok(Self {
             camera: crate::headless::camera_for_scene(&cli.scene),
             cli,
@@ -114,6 +142,9 @@ impl App {
             reload_errors: Vec::new(),
             frames: 0,
             m0_uniform,
+            octree,
+            osc_stats: None,
+            osc_ranges: Vec::new(),
         })
     }
 
@@ -325,7 +356,24 @@ impl App {
             self.timers.begin(&mut rpass, 0);
             self.timers.end(&mut rpass, 0);
             self.timers.begin(&mut rpass, 1);
-            self.star_pass.draw(&mut rpass);
+            if let Some(osc) = self.octree.as_mut() {
+                // It.1 streaming path: cull → reconcile → ingest → draw ranges
+                // (identical to headless.rs; the overlay shows FrameStats).
+                let vp = glam::Mat4::from_cols_array_2d(&uniforms.view_proj);
+                let stats = osc.frame(
+                    self.camera.pos_pc,
+                    &vp,
+                    self.cli.m0,
+                    &mut self.star_pass,
+                    &self.gpu.queue,
+                );
+                self.osc_ranges.clear();
+                self.osc_ranges.extend_from_slice(osc.draw_ranges());
+                self.osc_stats = Some(stats);
+                self.star_pass.draw_ranges(&mut rpass, &self.osc_ranges);
+            } else {
+                self.star_pass.draw(&mut rpass);
+            }
             self.timers.end(&mut rpass, 1);
             // forget_lifetime detaches the encoder borrow so egui-wgpu can
             // hold the pass (it may re-open it for paint callbacks). Safe:
@@ -393,6 +441,23 @@ impl App {
                 ui.label(format!("stars: {}", self.star_count));
                 ui.label(format!("source: {}", self.provenance));
                 ui.label(format!("scene: {}", self.cli.scene));
+                if let Some(s) = &self.osc_stats {
+                    ui.separator();
+                    ui.label(egui::RichText::new("T0 streaming (It.1)").strong());
+                    ui.monospace(format!(
+                        "leaves desired/resident {:>4} / {:<4}",
+                        s.desired_leaves, s.resident_leaves
+                    ));
+                    ui.monospace(format!(
+                        "stars resident/drawn {:>9} / {:<9}",
+                        s.resident_stars, s.drawn
+                    ));
+                    ui.monospace(format!(
+                        "pending {} · loads {} · evictions {}",
+                        s.pending, s.loads, s.evictions
+                    ));
+                    ui.monospace(format!("streamed {:.1} MB", s.mb_streamed));
+                }
                 ui.label(format!(
                     "cam pos (pc): [{:.3}, {:.3}, {:.3}]",
                     self.camera.pos_pc.x, self.camera.pos_pc.y, self.camera.pos_pc.z
