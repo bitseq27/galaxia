@@ -1,0 +1,69 @@
+{
+ "partitions": {
+  "n32_4702": {
+   "pixel": 4702,
+   "nside": 32,
+   "mirror": "sub-partitioned(esa)",
+   "rows": 43170,
+   "skipped": 17619,
+   "baked_bytes": 1381440,
+   "raw_sha256": null,
+   "baked_sha256": "d0300489a0a54df74328a08ed00372243fe5baeb92be74afd4f8d0a91ae8c326",
+   "fetched_at": "2026-10-23T18:29:38Z",
+   "seconds": 23.7,
+   "truncated_at_cap": false,
+   "sub_partitioned": true,
+   "children": [
+    18620,
+    18875,
+    18876,
+    19132
+   ],
+   "children_detail": [
+    {
+     "key": "n64_18620",
+     "rows": 10726,
+     "skipped": 4196,
+     "mirror": "esa",
+     "seconds": 3.6
+    },
+    {
+     "key": "n64_18875",
+     "rows": 9799,
+     "skipped": 3852,
+     "mirror": "esa",
+     "seconds": 3.7
+    },
+    {
+     "key": "n64_18876",
+     "rows": 11203,
+     "skipped": 4797,
+     "mirror": "esa",
+     "seconds": 3.6
+    },
+    {
+     "key": "n64_19132",
+     "rows": 11442,
+     "skipped": 4774,
+     "mirror": "esa",
+     "seconds": 3.9
+    }
+   ],
+   "capped_rows": 50000,
+   "capped_raw_sha256": "63379e6a9fa8ab71b18f3ca7e548110aada682cec44dc9c006fc899ed0920109"
+  },
+  "n32_4445": {
+   "pixel": 4445,
+   "nside": 32,
+   "mirror": "esa",
+   "rows": 0,
+   "skipped": 1,
+   "baked_bytes": 0,
+   "raw_sha256": "14c5e0c26b9ace0ac0fe483a51e7663feb2a005ae594894896ddfd172eb043e2",
+   "baked_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "fetched_at": "2026-10-23T18:29:39Z",
+   "seconds": 1.1,
+   "truncated_at_cap": false
+  }
+ }
+}

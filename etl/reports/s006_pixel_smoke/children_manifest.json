@@ -1,0 +1,54 @@
+{
+ "n64_18620": {
+  "key": "n64_18620",
+  "pixel": 18620,
+  "nside": 64,
+  "mirror": "esa",
+  "rows": 10726,
+  "skipped": 4196,
+  "raw_sha256": "ecf5d3c05b6969c47e36bafcacd67c63b59dc19ee44d8f4623e06b032df2505e",
+  "seconds": 3.6,
+  "fetched_at": "2026-10-23T18:29:27Z",
+  "baked_bytes": 343232,
+  "baked_sha256": "e40dd7511acd96bce93c1c624353981886b13c5a60d3a57f63e90f594fe78f1a"
+ },
+ "n64_18875": {
+  "key": "n64_18875",
+  "pixel": 18875,
+  "nside": 64,
+  "mirror": "esa",
+  "rows": 9799,
+  "skipped": 3852,
+  "raw_sha256": "18d8aad8bea16ef850b9bc4933b865b75ea71ac0a14135d63559b39652a90c20",
+  "seconds": 3.7,
+  "fetched_at": "2026-10-23T18:29:31Z",
+  "baked_bytes": 313568,
+  "baked_sha256": "532321cd949f752329bd3687fd2f29fc3f3f4ba0d3c01e6e12ef8dfbaf9f45f9"
+ },
+ "n64_18876": {
+  "key": "n64_18876",
+  "pixel": 18876,
+  "nside": 64,
+  "mirror": "esa",
+  "rows": 11203,
+  "skipped": 4797,
+  "raw_sha256": "0a8f1405b36d34641d7a8d432d682ea711b50dd21488753f697ded4c3a762977",
+  "seconds": 3.6,
+  "fetched_at": "2026-10-23T18:29:34Z",
+  "baked_bytes": 358496,
+  "baked_sha256": "16435225ad55c5048534ae84fff73a24e2dd730f2d5060d4240c23206f7c987a"
+ },
+ "n64_19132": {
+  "key": "n64_19132",
+  "pixel": 19132,
+  "nside": 64,
+  "mirror": "esa",
+  "rows": 11442,
+  "skipped": 4774,
+  "raw_sha256": "bc34213b62bd9aef808fd794109f52ccc0a81c4107a3939f3218e49677a96fca",
+  "seconds": 3.9,
+  "fetched_at": "2026-10-23T18:29:38Z",
+  "baked_bytes": 366144,
+  "baked_sha256": "1e2f596456f19783922e1a74eaa41800473638cc3828236bcc532426e5d506d1"
+ }
+}

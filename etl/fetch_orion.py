@@ -9,14 +9,21 @@ Rules this enforces (PLAN §8.4.1):
   1. free-disk gate: refuses to start below --min-free-gb (default 40 on the target;
      override for the sandbox smoke slice with --min-free-gb 1)
   2. per-partition: fetch raw CSV -> quantise to 32 B/star -> DELETE raw immediately
-  3. resumable: partitions whose baked output + manifest entry exist are skipped
+  3. resumable: partitions whose baked output + manifest entry exist are skipped;
+     s006: child fetches are cached too (etl/build/children/ + children_manifest.json)
   4. retries with backoff + automatic mirror failover (ESA -> ARI -> CDS -> NADC)
   5. provenance: etl/reports/fetch_manifest.json records endpoint, query, timestamp,
      row count, sha256 of raw and baked, for lineage.py (DAY0 §6)
+  6. s006 (the s005 50k-cap fix): a result at the >=49,999 canary is TRUNCATED by
+     the archive — the pixel is automatically re-fetched as its 4 nside*2 children
+     (recursively, floor nside 256) and the child records are CONCATENATED in
+     ascending child-pixel-id order into the parent bin (rows*32 == bytes exact)
 
 Partitioning: HEALPix Nside=32 (RING), pixels intersecting the cone
 (83.82, -5.39, r=20 deg). Each partition queries with the pixel POLYGON
 (interpolated edges) so rows are not double-counted across partitions.
+Child pixels: NESTED 4p..4p+3 converted to RING (ring2nest/nest2ring) —
+containment verified against healpy before first use (s006).
 
 Quantised record v0 (32 B — final §8.4 schema lands in It.1):
     x,y,z  f32 pc (Sun-centred ICRS, It.0 shortcut frame)
@@ -39,8 +46,18 @@ RAW = os.path.join(HERE, "raw", "orion")
 BAKE = os.path.join(HERE, "build")
 REPORTS = os.path.join(HERE, "reports")
 MANIFEST = os.path.join(REPORTS, "fetch_manifest.json")
+# s006: sub-partitioned re-fetch state (the 50k-cap fix). Child results are
+# cached individually so chunked foreground runs resume at child granularity.
+CHILD_DIR = os.path.join(BAKE, "children")
+CHILD_MANIFEST = os.path.join(REPORTS, "children_manifest.json")
 
 COLUMNS = ("source_id, ra, dec, parallax, phot_g_mean_mag, bp_rp")
+
+# s005 discovery: the ESA archive silently caps TAP results at 50k rows
+# (sync AND async; raising MAXREC is ignored). A result at the canary is
+# INCOMPLETE -> s006 fix: re-fetch as 4 children at 2x nside and concatenate.
+CAP_CANARY = 49_999
+MAX_NSIDE = 256  # recursion floor 32 -> 64 -> 128 -> 256, then hard-fail
 
 
 def log(*a):
@@ -117,6 +134,117 @@ def adql_polygon(verts):
     return f"POLYGON('ICRS', {pts})"
 
 
+def ring_children(nside, pix):
+    """The 4 RING-ordered child pixel ids of RING pixel `pix` at `nside`.
+
+    HEALPix's 4*p..4*p+3 parent/child relation holds ONLY in NESTED ordering —
+    s006 verified the conversion (ring2nest -> x4 -> nest2ring) against healpy
+    containment: centroids AND inward-pushed boundary corners of every child
+    map back to the parent via ang2pix (18 sample parents incl. the densest
+    truncated pixels, plus one level down n64->n128 for n32_4702)."""
+    import healpy as hp
+    q = int(hp.ring2nest(nside, pix))
+    return sorted(int(c) for c in hp.nest2ring(2 * nside, [4 * q + k for k in range(4)]))
+
+
+def build_query(nside, pix, gmax):
+    verts = pixel_polygon(nside, pix)
+    return (f"SELECT {COLUMNS} FROM gaiadr3.gaia_source WHERE "
+            f"CONTAINS(POINT('ICRS', ra, dec), {adql_polygon(verts)}) = 1 "
+            f"AND CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {CONE_RA}, {CONE_DEC}, {CONE_R})) = 1 "
+            f"AND phot_g_mean_mag < {gmax}")
+
+
+def fetch_records(nside, pix, gmax, childman):
+    """Fetch one pixel quantised to 32 B records, sub-partitioning on the cap.
+
+    Returns (records, rows, skipped, info). A result of >= CAP_CANARY rows
+    means the archive truncated it: re-fetch as the 4 children at 2*nside and
+    CONCATENATE child records in ascending child-pixel-id order (s005
+    next_action spec); recurse if a child is itself capped. Child results are
+    cached (CHILD_DIR bin + CHILD_MANIFEST entry) for resumability. Raw CSVs
+    are deleted immediately after use (§8.4.1 rule 1) at every level."""
+    key = f"n{nside}_{pix}"
+    cached_bin = os.path.join(CHILD_DIR, f"{key}.bin")
+    ent = childman.get(key)
+    if nside > 32 and ent and os.path.exists(cached_bin):
+        with open(cached_bin, "rb") as fh:
+            rec = fh.read()
+        log(f"[{key}] cached child hit: rows={ent['rows']} skipped={ent['skipped']}")
+        return rec, ent["rows"], ent["skipped"], ent
+
+    t0 = time.time()
+    mirror, raw = tap_sync(None, build_query(nside, pix, gmax))
+    raw_path = os.path.join(RAW, f"{key}.csv")
+    with open(raw_path, "wb") as fh:
+        fh.write(raw)
+    n_lines = raw.count(b"\n") - 1
+    if n_lines > 400_000:
+        raise RuntimeError(
+            f"[{key}] {n_lines} rows for one pixel — polygon winding "
+            f"likely inverted; aborting before baking")
+    raw_sha = sha256_file(raw_path)
+    os.remove(raw_path)  # §8.4.1 rule 1: delete raw immediately after use
+
+    if n_lines >= CAP_CANARY:
+        # The archive capped this result — it is INCOMPLETE. Sub-partition.
+        if nside >= MAX_NSIDE:
+            raise RuntimeError(
+                f"[{key}] still capped at nside={nside} (>= {MAX_NSIDE}) — "
+                f"polygon bug or archive change; refusing to bake")
+        raw = None  # free before recursion (1 GB sandbox)
+        kids = ring_children(nside, pix)
+        log(f"[{key}] CAPPED at {n_lines} rows (mirror={mirror}) -> "
+            f"sub-partitioning into nside={2 * nside} children {kids}")
+        recs, rows, skipped, kdetail = [], 0, 0, []
+        for c in kids:  # ascending child id = concatenation order (s005 spec)
+            rc, rn, rsk, rinfo = fetch_records(2 * nside, c, gmax, childman)
+            recs.append(rc)
+            rows += rn
+            skipped += rsk
+            kd = {"key": rinfo["key"], "rows": rn, "skipped": rsk,
+                  "mirror": rinfo["mirror"], "seconds": rinfo["seconds"]}
+            if rinfo.get("sub_partitioned"):
+                kd["sub_partitioned"] = True
+                kd["children"] = rinfo["children"]
+            kdetail.append(kd)
+            del rc
+        rec = b"".join(recs)
+        del recs
+        if rows + skipped <= n_lines:
+            log(f"[{key}] WARNING: children total {rows + skipped} <= capped "
+                f"parent {n_lines} — false-positive canary (true count exactly "
+                f"at cap) or polygon problem; investigate before trusting")
+        info = {"key": key, "pixel": pix, "nside": nside,
+                "mirror": f"sub-partitioned({mirror})",
+                "rows": rows, "skipped": skipped, "raw_sha256": None,
+                "capped_rows": n_lines, "capped_raw_sha256": raw_sha,
+                "sub_partitioned": True, "children": kids,
+                "children_detail": kdetail,
+                "seconds": round(time.time() - t0, 1),
+                "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    else:
+        rec, rows, skipped = quantise_csv(raw)
+        raw = None
+        info = {"key": key, "pixel": pix, "nside": nside, "mirror": mirror,
+                "rows": rows, "skipped": skipped, "raw_sha256": raw_sha,
+                "seconds": round(time.time() - t0, 1),
+                "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+    assert len(rec) == info["rows"] * 32, f"[{key}] rows*32 != bytes"
+    info["baked_bytes"] = len(rec)
+    info["baked_sha256"] = hashlib.sha256(rec).hexdigest()
+    if nside > 32:
+        os.makedirs(CHILD_DIR, exist_ok=True)
+        with open(cached_bin, "wb") as fh:
+            fh.write(rec)
+        childman[key] = info
+        json.dump(childman, open(CHILD_MANIFEST, "w"), indent=1)
+    log(f"[{key}] {info['mirror']} rows={rows} skipped={skipped} "
+        f"baked={len(rec)}B raw_deleted dt={info['seconds']}s")
+    return rec, rows, skipped, info
+
+
 def quantise_csv(raw_bytes):
     """CSV rows -> 32 B records. Returns (records bytes, n_rows, n_skipped)."""
     import numpy as np
@@ -178,6 +306,13 @@ def main():
     log(f"partitions: {len(pixels)} (nside={args.nside})")
 
     manifest = json.load(open(MANIFEST)) if os.path.exists(MANIFEST) else {"partitions": {}}
+    if manifest.get("scheme") != "pixel-polygon-v1" and manifest.get("scheme"):
+        raise RuntimeError(
+            "fetch_manifest.json belongs to a different scheme "
+            f"({manifest.get('scheme')}) — this fetcher owns the pixel-polygon "
+            "scheme; s006+ uses etl/fetch_cone_exact.py (box tiling)")
+    manifest.setdefault("partitions", {})
+    childman = json.load(open(CHILD_MANIFEST)) if os.path.exists(CHILD_MANIFEST) else {}
 
     # Sequential by design at --workers 1-2 against ESA; the async job pool is
     # It.1 work. Sequential keeps throttling risk ~zero for the smoke slice.
@@ -187,47 +322,35 @@ def main():
         if key in manifest["partitions"] and os.path.exists(baked):
             log(f"[{key}] already baked, skipping")
             continue
-        verts = pixel_polygon(args.nside, pix)
-        q = (f"SELECT {COLUMNS} FROM gaiadr3.gaia_source WHERE "
-             f"CONTAINS(POINT('ICRS', ra, dec), {adql_polygon(verts)}) = 1 "
-             f"AND CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {CONE_RA}, {CONE_DEC}, {CONE_R})) = 1 "
-             f"AND phot_g_mean_mag < {args.gmax}")
-        t0 = time.time()
-        mirror, raw = tap_sync(None, q)
-        raw_path = os.path.join(RAW, f"{key}.csv")
-        with open(raw_path, "wb") as fh:
-            fh.write(raw)
-        n_lines = raw.count(b"\n") - 1
-        if n_lines > 400_000:
-            raise RuntimeError(
-                f"[{key}] {n_lines} rows for one nside=32 pixel — polygon winding "
-                f"likely inverted (expected ~70-90k); aborting before baking")
-        # s005: the archive caps TAP results at 50k rows SILENTLY (sync+async).
-        # A partition landing on the cap is INCOMPLETE — flag it in the
-        # manifest; the real fix (sub-partitioned re-fetch) is session 006.
-        truncated = n_lines >= 49_999
-        if truncated:
-            log(f"[{key}] WARNING: hit the 50k archive result cap — partition "
-                f"INCOMPLETE (fetched {n_lines}; re-fetch needs sub-partitioning)")
-        rec, n, skipped = quantise_csv(raw)
+        # s006: fetch_records sub-partitions automatically when the archive
+        # caps a result (>= 49,999 rows) — the s005 truncation fix.
+        rec, n, skipped, info = fetch_records(args.nside, pix, args.gmax, childman)
         with open(baked, "wb") as fh:
             fh.write(rec)
-        raw_sha = sha256_file(raw_path)
-        os.remove(raw_path)  # §8.4.1 rule 1: delete raw immediately after baking
-        manifest["partitions"][key] = {
-            "pixel": pix, "nside": args.nside, "mirror": mirror,
-            "rows": n, "skipped": skipped, "baked_bytes": len(rec),
-            "raw_sha256": raw_sha, "baked_sha256": hashlib.sha256(rec).hexdigest(),
-            "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "seconds": round(time.time() - t0, 1),
+        del rec
+        entry = {
+            "pixel": pix, "nside": args.nside, "mirror": info["mirror"],
+            "rows": n, "skipped": skipped, "baked_bytes": info["baked_bytes"],
+            "raw_sha256": info.get("raw_sha256"),
+            "baked_sha256": info["baked_sha256"],
+            "fetched_at": info["fetched_at"],
+            "seconds": info["seconds"],
+            "truncated_at_cap": False,  # s006: sub-partitioning guarantees completeness
         }
-        if truncated:
-            manifest["partitions"][key]["truncated_at_cap"] = True
+        if info.get("sub_partitioned"):
+            entry["sub_partitioned"] = True
+            entry["children"] = info["children"]
+            entry["children_detail"] = info["children_detail"]
+            entry["capped_rows"] = info["capped_rows"]
+            entry["capped_raw_sha256"] = info["capped_raw_sha256"]
+        manifest["partitions"][key] = entry
         json.dump(manifest, open(MANIFEST, "w"), indent=1)
-        log(f"[{key}] {mirror} rows={n} skipped={skipped} baked={len(rec)}B "
-            f"raw_deleted dt={time.time()-t0:.0f}s")
+        log(f"[{key}] rows={n} skipped={skipped} baked={info['baked_bytes']}B "
+            f"dt={info['seconds']}s" + (" SUB-PARTITIONED" if entry.get("sub_partitioned") else ""))
     tot = sum(p["rows"] for p in manifest["partitions"].values())
-    log(f"MANIFEST partitions={len(manifest['partitions'])} total_rows={tot}")
+    tot_fetched = sum(p["rows"] + p["skipped"] for p in manifest["partitions"].values())
+    log(f"MANIFEST partitions={len(manifest['partitions'])} total_rows={tot} "
+        f"total_fetched={tot_fetched}")
     log("FETCH DONE")
 
 
