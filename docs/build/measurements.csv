@@ -4,3 +4,6 @@ timestamp,session,iteration,commit,scene,stars_visible,star_raster_ms,volumetric
 2026-10-23T09:53:30Z,002,0,a1e3a5d,orion_wide,10000,,,,,23.771,42.1,,,,quiet-machine median-of-3 {23.77 23.52 48.72}; prior 41.192 row was itself noisy — sandbox rule now: median of 3, no concurrent jobs
 2026-10-23T11:02:08Z,002,1,a1e3a5d,t0_orion_m13,2999923,,,,,224.572,4.5,,,,median-of-3 quiet; 3.0M instances streamed from 118/315 leaves (96MB); llvmpipe software raster — NOT Titan numbers
 2026-10-23T11:02:08Z,002,0,a1e3a5d,orion_wide,10000,,,,,25.257,41.0,,,,median-of-3 quiet; +6% vs 23.771 (within 10% gate)
+2026-10-23T13:11:36Z,003,0,c494b3f,orion_wide,10000,,,,,42.683,23.4,,,,median-of-3 quiet {41.36 42.68 75.81}; sandbox host contended (sha256 ref 365 MB/s) — ~1.7x s002's 25.26, environmental not tree
+2026-10-23T13:11:36Z,003,1,c494b3f,t0_orion_m13,2999869,,,,,574.904,1.7,,,116,32,median-of-3 quiet {649.6 511.3 574.9}; llvmpipe fill-bound after m_app radius fix (s002: 224.6 on faster host, pre-fix curve)
+2026-10-23T13:11:36Z,003,1,53eb59f,t0_flytest_60s_50pcs,1468472,,,,,1163.0,0.9,,,108,4.2,It.1 streaming gate PASS (sandbox proxy): G1 min-resident 1.47M at true 50 pc/s wall; G2 settle 0.652 s (budget 2); 300 loads/259 evictions/257.5 MB; deferred max 4; flytest.csv holds per-frame rows

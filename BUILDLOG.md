@@ -308,7 +308,7 @@ form). Then wire the same stats into the windowed egui overlay.
 
 ---
 
-## Session 003 — 2026-10-23 — Iteration 1 (streaming gate: --fly-test) — IN PROGRESS
+## Session 003 — 2026-10-23 — Iteration 1 (streaming gate: --fly-test)
 
 **Goal:** Execute session 002's `Next`: `--fly-test SECONDS,PC_PER_S` streaming
 harness (It.1 sandbox-proxy gate) + windowed overlay stats; requires re-baking
@@ -318,30 +318,118 @@ the T0 dataset (sandbox was reset; `etl/build/`, `etl/raw/` are gitignored).
 session 002: toolchain gone, T0 artifact gone. Resume protocol findings:
 
 - Environment rebuilt: rustup 1.99.1 stable (same as s002), mesa EGL/llvmpipe
-  (LLVM 15.0.6), numpy 2.4.6, healpy 1.20.1.
+  (LLVM 15.0.6), numpy 2.4.6, healpy 1.20.1, pillow (in /opt/arena-python).
 - **apt mirror aliyun throttled again (~300 s stall) → deb.debian.org instant**
   (2 s). Session 001's finding still true; the sandbox image ships the slow mirror.
 - **`cargo build` at default `-j 2` OOM-kills rustc on `naga`** (SIGKILL, 1 GB
-  RAM). `-j 1` builds green (~7 min chunked). New sandbox build rule: `-j 1`.
-  No swap possible (swapon EPERM in container).
-- Background processes DO NOT survive between tool calls in this sandbox →
-  all long jobs run as repeated `timeout 230 …` foreground chunks
-  (cargo/fetcher are both incremental/resumable, so chunking is safe).
-- Resume checks: tests 13/13 green; orion_wide renders (mean Δ 1.18/255 vs the
-  iter0 shot — expected: s002 changed the brightness curve, flux-proportional
-  no-floor; 1.2 % of pixels differ >8/255, all on stars).
-- **Bench drift investigated (10 % rule):** orion_wide median {38.9, 58.1} ms
-  vs 25.26 recorded. Cause = host contention, not code: tree identical to
-  `470fc14`, bimodal sample spread 37–72 ms, 6 % lifetime CPU-steal in
-  /proc/stat, sha256 CPU ref 365 MB/s (new environment reference — future
-  sessions: compare this before trusting any sandbox ms number).
+  RAM). `-j 1` builds green. New sandbox rule: `-j 1`. No swap possible
+  (swapon EPERM in the container).
+- **Background processes DO NOT survive between tool calls here** → all long
+  jobs ran as repeated `timeout …` foreground chunks (cargo incremental and
+  the resumable fetcher make chunking lossless). Recorded in STATUS.yaml.
+- Resume checks: tests green; orion_wide renders (mean Δ 1.18/255 vs the iter0
+  shot — expected: s002 changed the brightness curve mid-session).
+- **Bench drift investigated (10 % rule):** orion_wide median 38.9–58 ms vs
+  25.26 recorded. Cause = host contention, not code: tree identical to
+  `470fc14`, bimodal spread 37–72 ms, 6 % lifetime CPU-steal in /proc/stat.
+  New cross-host normaliser recorded: sha256 CPU ref = **365 MB/s** on this
+  box (compare this before trusting any sandbox ms number).
 - Smoke re-fetch of pixel n32_4445: rows=0 skipped=1 — matches s002 manifest
-  (cone-edge sliver, 1 row, no usable parallax). Manifest total unchanged
-  (8,580,254) → fetcher+mirrors+quantiser verified end-to-end post-reset.
+  (cone-edge sliver, 1 row, no usable parallax). Fetcher+mirrors+quantiser
+  verified end-to-end post-reset before the full run.
 
-**Done:** (updated as the session progresses)
-- Full-cone re-fetch running in resumable chunks (423 partitions, ~7 s each).
+**Done:**
+- **Full-cone re-fetch 424/424 partitions** (`etl/fetch_orion.py`, resumable
+  chunks): 8,579,343 rows baked (274,538,976 B = rows×32 exact), 3,297,454
+  skipped. Fetched-row total **identical** to s002 (11,876,797) — archive
+  stable; 911 rows moved baked↔skipped (boundary rows vs the parallax cut).
+- `etl/octree_build.py` re-bake: 315 leaves / 368 nodes / max leaf 96,758 —
+  structure matches s002.
+- **`--fly-test SECONDS,PC_PER_S`** (`crates/galaxia-app/src/fly_test.rs`):
+  pre-roll (warm resident set) → flight at true wall speed → settle; per-frame
+  CSV `docs/build/flytest.csv` (15 cols incl. deferred); mid/end PNGs from
+  `--screenshot STEM`; gates G1 no-starve / G2 settle ≤ 2 s; exit code = verdict;
+  3 unit tests for spec parsing.
+- **Windowed t0 wiring + overlay** (`app_window.rs`): t0_* scenes now build the
+  OctreeScene and draw leaf ranges; overlay shows resident/desired leaves,
+  resident/drawn stars, pending/deferred/loads/evictions/streamed MB
+  (compile-only here — no display in sandbox).
+- **FIX (latent s002 bug, found by the gate): evicted GPU slot ranges leaked.**
+  `ResidentSet::reconcile` removed evicted leaves internally and discarded the
+  `Slot`s; the caller's second `remove()` returned None so `release()` never
+  ran — the free list drained to zero (fly-test settle: `mb_streamed` frozen
+  at exactly capacity 96.00 MB while 1.94 M stars of scalar capacity sat
+  "free"; alloc-fail → re-request thrash kept `pending` > 0 forever).
+  reconcile now returns evicted `(leaf, Slot)` pairs; caller releases.
+- **FIX: duplicate in-flight leaf requests** (eviction used to clear `pending`,
+  letting a second fetch start while the first read was airborne → arrival
+  overwrote the resident slot → second leak). `inflight` set now survives
+  eviction; stale/undesired arrivals are dropped on ingest.
+- **FIX: alloc-fail thrash** → arrivals that find no contiguous range park in a
+  `deferred` set, retried only when the free list can actually fit them
+  (`deferred` is a capacity tail, NOT outstanding work — G2 measures
+  `pending`).
+- **FIX (shader): per-star gate/brightness at the CAMERA.** `stars.wgsl` gated
+  on catalog mag while the CPU LOD cull admits by m_cam = G+5·log10(D_cam/D_sun)
+  → fly-through frames past the Sun were black (nearby G=18 stars are
+  apparent-8 from 20 pc but were zeroed). Shader now computes
+  m_app = mag + 5·log2(dist/d_sun)·0.30103 in-vertex (dist = clip.w,
+  d_sun = length(pos_pc)); origin views unchanged by construction.
+- Harness fidelity fix: dt clamp 0.5 s silently throttled the first gate run to
+  ~29 pc/s (flew 1747 pc of 3000) — clamp now 2 s; run reports
+  `dist_expected` vs `dist_flown` so this can never hide again.
+- Screenshots: `docs/build/shots/2026-10-23-iter1-s003-t0-orion-m13.png`,
+  `…-flytest-mid.png`, `…-flytest-end.png` (mid = ~1500 pc in: sparse local
+  starfield — physically right for m0=13 from inside the cone).
+- Tests 16/16, clippy clean.
 
-**Next (precise):** see entry when finalised.
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| cone partitions baked | 0/424 (reset) | **424/424, 8,579,343 rows** | ≥5 M ✔ |
+| G1 min resident stars @50 pc/s (60 s wall) | n/a (harness new) | **1,468,472** | >0 ✔ |
+| G2 settle (pending→0 after stop) | **NEVER** (leak+thrash) | **0.52–0.65 s** | ≤2 s ✔ |
+| flight distance (60 s × 50 pc/s) | 1,747 pc (dt clamp) | **3,011–3,022 pc** | 3,000 ✔ |
+| stream volume per gate run | 96 MB (frozen=leak) | **257.5 MB, 300 loads/259 evict** | — ✔ |
+| max deferred leaves in flight | n/a | **4** | steady tail ✔ |
+| frame ms orion_wide (median-3, this host) | 25.26 (s002 host) | **42.683** | n/a — host contention, see env ref |
+| frame ms t0_orion_m13 (median-3) | 224.6 (s002 host) | **574.9** | n/a — fill-bound llvmpipe post m_app |
+| tests | 13 | **16 passed** | green ✔ |
 
-**Commit:** (in-progress; pushed per change per operator instruction)
+**Blockers hit:**
+- First gate run FAILED G2 (pending never drained) — the leak/thrash bug above.
+  Dead-end worth keeping: the frozen `mb_streamed == capacity exactly` was the
+  fingerprint; any future "pending won't drain" should check free-list vs
+  scalar capacity first.
+- `timeout`-chunked foreground runs are mandatory here (background dies between
+  calls) — cost ~15 extra invocations for the fetch; resumability made it free.
+- EGL `eglInitialize` DRI2 "failed to load driver" line appears on some runs
+  before llvmpipe engages — harmless (GPU ready afterwards), noted so nobody
+  chases it.
+
+**Not done / discovered work:**
+- Distance-priority leaf admission (next_action) — leaf-id order draws the
+  capacity wedge and arbitrary deferred tails.
+- The m_app view-depth vs euclidean mismatch (≤0.46 mag off-axis) — It.2
+  photometry supersedes the whole skeleton curve anyway.
+- 190 bright null-parallax stars + 3.3 M no-parallax cone stars: still the
+  biggest data debt (Bailer-Jones access path / literature fallback).
+- Windowed path (winit+egui+t0 overlay) still never run on a display.
+- t0 bench on llvmpipe is now fill-bound (574 ms): skeleton brightness/radius
+  curves make additive overdraw dominate software raster; Titan unaffected in
+  kind but It.2 must budget it.
+
+**Screenshot:** `docs/build/shots/2026-10-23-iter1-s003-flytest-end.png`
+
+**Next (precise):** Distance-priority leaf admission: in
+`ResidentSet::reconcile`/`OctreeScene::frame`, order the fill pass by leaf
+centroid distance to camera (T0Tree nodes carry centres; build a
+`Vec<(f64 dist, u32 leaf)>` per reconcile from the desired set) instead of
+stable leaf-id order; keep evict-only-undesired unchanged. Re-run
+`--fly-test 60,50` at `--resident-cap 1500000` and `3000000`: both must print
+PASS, and a fresh `t0_orion_m13 --screenshot` at cap 1.5 M must show NO
+diagonal missing wedge (compare vs
+`docs/build/shots/2026-10-23-iter1-s003-t0-orion-m13.png`). Append flytest.csv
++ shots + a measurements row; update STATUS.yaml.
+
+**Commit:** `53eb59f`

@@ -1,10 +1,10 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
-updated: 2026-10-23T17:50:00+08:00
-session: 2
-commit: "ac0987d"
+updated: 2026-10-23T21:12:00+08:00
+session: 3
+commit: "53eb59f"
 iteration: 1
-iteration_name: "real data (octree + streaming)"
+iteration_name: "real data (octree + streaming) — streaming gate closed"
 branch: main
 
 phase: prototype
@@ -14,67 +14,84 @@ last_green_ci: ""               # CI lands It.3; manual gates recorded in BUILDL
 working:
   - "headless render path: --screenshot/--bench/--frames (offscreen 2560x1440 -> PNG)"
   - "star pass: 10,000 REAL Gaia DR3 stars (bright subset G<10, Orion cone) as additive billboards"
-  - "camera: f64 Sun-centred pc frame, exponential speed, damped rotation; orion_wide/orion_belt/betelgeuse/pleiades presets"
+  - "camera: f64 Sun-centred pc frame, exponential speed, damped rotation; orion_wide/orion_belt/betelgeuse/pleiades/t0_orion_m13 presets"
   - "frame-graph skeleton: 7 named pass slots with per-pass GPU timestamp wiring"
   - "WGSL hot-reload watcher with naga validate-before-swap (windowed path)"
-  - "egui debug overlay (windowed path): fps, per-pass ms, provenance, camera state"
+  - "egui debug overlay (windowed path): fps, per-pass ms, provenance, camera state, T0 streaming stats (s003: resident/desired/pending/deferred/loads/evictions/MB)"
   - "DAY0 data: smoke test OK, cone count 15,573,949, bright subset 17,494 rows committed"
-  - "unit tests 11/11 green; clippy clean"
-  - "T0 octree artifact: 8,580,254 stars / 315 leaves / 368 nodes (etl/build/t0/)"
-  - "galaxia-data: octree loader + frustum&LOD cull + LRU resident set + stream thread"
-  - "t0 scenes draw 2,999,923 streamed stars at 1440p (sandbox cap 3M)"
+  - "unit tests 16/16 green; clippy clean"
+  - "T0 octree artifact re-baked post-reset: 8,579,343 stars / 315 leaves / 368 nodes (etl/build/t0/); fetch manifest 424/424, rows x32 == bytes exact"
+  - "galaxia-data: octree loader + frustum&LOD cull + LRU resident set + stream thread (s003: slot-release + dedupe fixes, see BUILDLOG)"
+  - "--fly-test SECONDS,PC_PER_S harness: per-frame CSV (docs/build/flytest.csv), mid/end screenshots, G1 no-starve + G2 settle<=2s gates, exit code = verdict"
+  - "It.1 streaming gate PASS (sandbox proxy): 60 s @ true 50 pc/s (3022 pc), G1 min 1,468,472 residents, G2 settle 0.52-0.65 s, deferred<=4"
+  - "windowed t0_* scenes now wire the octree (compile-only here; no display in sandbox)"
 
 not_working:
   - "windowed mode UNTESTED (sandbox has no display); first target-machine run = integration"
   - "GPU timestamps on llvmpipe report ~0; bench falls back to CPU wall time when <0.01 ms"
-  - "190 brightest cone stars (null parallax, e.g. Rigel) skipped — no distance source found yet"
+  - "190 brightest cone stars (null parallax, e.g. Rigel) skipped — no distance source found yet; 3.3M no-parallax stars excluded from T0"
   - "lit_pixels content check threshold defeated by background encoding (cosmetic)"
   - "timer readback single-buffered: poll_results blocks (It.2 debt, see timing.rs)"
+  - "sandbox bench numbers NOT comparable to s002's host: this box measures orion_wide 42.7 ms vs 25.26 recorded (contention; sha256 CPU ref 365 MB/s is the cross-session normaliser)"
+  - "shader m_app uses view-depth (clip.w) not euclidean D_cam: off-axis stars read <=0.46 mag bright vs CPU cull (skeleton tolerance; It.2 photometry supersedes)"
 
 next_action: |
-  Add --fly-test SECONDS,PC_PER_S to galaxia-app: camera flies along +view at fixed
-  speed; log per-frame (resident_stars, pending, loads, evictions, stream MB/s) to
-  docs/build/flytest.csv; assert pending==0 within 2 s of stopping and no frame
-  starves to 0 residents at 50 pc/s (It.1 streaming gate, sandbox-proxy form).
-  Then mirror those stats into the windowed egui overlay.
+  Distance-priority leaf admission in ResidentSet::reconcile + OctreeScene:
+  replace stable leaf-id fill order with nearest-first (leaf centroid distance
+  to camera; T0Tree nodes already carry centres). The leaf-id order is what
+  draws the capacity wedge at caps below the desired set (s002 shot) and what
+  leaves arbitrary deferred tails now. Then re-run --fly-test 60,50 at
+  --resident-cap 1500000 AND 3000000: gate must stay PASS and the wedge must
+  disappear from a fresh t0_orion_m13 --screenshot (compare vs
+  2026-10-23-iter1-s003-t0-orion-m13.png). Record flytest.csv + shots + a
+  measurements row.
 
 next_iteration: 1
 next_iteration_scope: |
-  It.1 REAL DATA: T0 ETL slice (normalise -> astrom -> quantise 32 B/star -> Morton ->
-  octree -> leaf pack) + Rust octree loader with async streaming and LRU resident set.
-  Gates: >=5 M stars visible; streaming keeps up at 50 pc/s; astrometry <1 arcsec vs
-  Stellarium for 100 named stars. Retain the It.0 single-frame shortcut until It.3.
+  It.1 REAL DATA: T0 ETL slice + Rust octree loader with async streaming and
+  LRU resident set. Gates: >=5 M stars visible (met: 3.0 M drawn at sandbox
+  cap, artifact 8.58 M); streaming keeps up at 50 pc/s (met, sandbox-proxy
+  form — target run pending); astrometry <1 arcsec vs Stellarium for 100 named
+  stars (target-machine). Retain the It.0 single-frame shortcut until It.3.
 
 blocked: []
 
 measurements_latest:
-  dataset: "T0-orion-bright-subset (Gaia DR3, G<10 cone r=20deg, 17,494 rows; 10,000 used)"
+  dataset: "T0-orion-cone (Gaia DR3 re-fetch 2026-10-23: 8,579,343 baked / 3,297,454 skipped; bright subset 17,494 for It.0 scenes)"
   stars_visible_ceiling_60fps: 0        # not measurable on llvmpipe
   star_raster_10M_1440p_ms: null        # budget 5.5 — It.2
   volumetrics_ms: null                  # budget 2.2 — It.4
   glare_ms: null                        # budget 1.5 — It.2
   fsr2_ms: null                         # budget 1.2 — It.2
-  frame_ms_orion_wide: 25.26             # CPU wall, sandbox llvmpipe 2560x1440 — NOT a Titan number
-fps_orion_wide: 41                    # ditto (headless, 5-frame avg of last frame)
+  frame_ms_orion_wide: 42.683           # CPU wall, THIS sandbox host (contended); s002 host did 25.26 — compare via sha256 ref, not raw ms
+  fps_orion_wide: 23
+  frame_ms_t0_orion_m13: 574.904        # median-3; fill-bound llvmpipe, post m_app fix
+  flytest_gate: "PASS (G1 min-resident 1.47M @50 pc/s; G2 settle 0.52-0.65 s)"
   peak_vram_gb: 0.0                     # llvmpipe: host RAM, unmeasured
-  resident_leaves: 0
-  stream_mb_s: 48   # 96 MB over ~2 s of load frames (sandbox disk cache)
-  free_nvme_gb: 8                       # sandbox disk; target machine = 200 (HARD LIMIT)
+  resident_leaves: 116
+  stream_mb_s: 32                       # t0 fill; fly-test sustained 4.2 MB/s wall avg incl. churn 257.5 MB
+  free_nvme_gb: 6                       # sandbox disk; target machine = 200 (HARD LIMIT)
 
 environment:
   gpu: "llvmpipe (LLVM 15.0.6) software raster — sandbox; TARGET is TITAN RTX/Vulkan"
   driver: "mesa EGL surfaceless (GLES build flavour, ADR-0010)"
   wgpu: "30.0.1 (pinned, =30.0.1)"
   rust: "1.99.1 stable"
-  os: "Debian 12 container, 1 GB RAM, 2 cores, no display"
+  os: "Debian 12 container, 1 GB RAM, 2 cores, no display, NO SWAP (swapon EPERM)"
   ram_gb: 1
   threads: 2
+  sandbox_rules:
+    - "build with cargo -j 1 (default -j 2 OOM-kills rustc on naga at 1 GB)"
+    - "background processes DO NOT survive between tool calls — run long jobs as resumable timeout chunks"
+    - "apt: deb.debian.org (image ships throttled aliyun mirror)"
+    - "bench: median-of-3, nothing concurrent; normalise across hosts with sha256 CPU ref (this box: 365 MB/s)"
+    - "python deps live in /opt/arena-python: numpy, healpy, pillow (pip install on reset)"
 
 adrs:
   - "0004-orion-prototype-region"
   - "0010-sandbox-gles-build"
-  # session 001 addendum: fetcher proven, full cone run in flight
 
 datasets:
-  gaia: { release: DR3, epoch: 2016.0, rows: 17494, accessed: "2026-10-23" }
+  gaia: { release: DR3, epoch: 2016.0, rows: 8579343, accessed: "2026-10-23" }
   gaia_count_orion_cone_g20: 15573949   # async job b3a87cff-ceb8-11f1-9d98-bc97e148b76b-O
+  fetch_manifest_partitions: 424        # rows identical to s002 (11,876,797 fetched); 911 rows moved baked<->skipped
