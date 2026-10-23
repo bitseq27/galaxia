@@ -5,6 +5,7 @@
 //! Harre–Heller chain in Iteration 2 — see PLAN §7.1).
 
 pub mod color;
+pub mod color_hh_table;
 pub mod math;
 pub mod units;
 

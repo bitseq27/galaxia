@@ -5,7 +5,7 @@
 //! Records carry provenance in the returned source string; the provenance flag
 //! per object (D2) becomes a real field in It.1 with the baked format.
 
-use galaxia_core::color::{bp_rp_to_rgb_crude, UNKNOWN_RGB};
+use galaxia_core::color::{bp_rp_to_linear_srgb, UNKNOWN_RGB};
 use galaxia_core::math::{equatorial_to_cartesian_au, parallax_mas_to_pc};
 use galaxia_core::units::AU_IN_PC;
 use galaxia_render::StarRecord;
@@ -102,7 +102,7 @@ pub fn load_gaia_csv(path: &Path) -> anyhow::Result<StarSource> {
         let pos_au = equatorial_to_cartesian_au(ra, dec, dist_pc);
         let pos_pc = [pos_au.x / AU_IN_PC, pos_au.y / AU_IN_PC, pos_au.z / AU_IN_PC];
         let color = match c_bprp.and_then(parse).map(|v| v as f32) {
-            Some(bp_rp) if bp_rp.is_finite() => bp_rp_to_rgb_crude(bp_rp),
+            Some(bp_rp) if bp_rp.is_finite() => bp_rp_to_linear_srgb(bp_rp),
             _ => UNKNOWN_RGB,
         };
         stars.push(StarRecord { pos_pc, mag: g as f32, color });
@@ -141,7 +141,7 @@ pub fn procedural_10k() -> StarSource {
         stars.push(StarRecord {
             pos_pc: [x, y, z.clamp(-400.0, 400.0)],
             mag: mag as f32,
-            color: bp_rp_to_rgb_crude(bp_rp),
+            color: bp_rp_to_linear_srgb(bp_rp),
         });
     }
     StarSource {
