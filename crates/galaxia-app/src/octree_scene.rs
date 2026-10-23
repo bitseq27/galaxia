@@ -28,6 +28,9 @@ pub struct OctreeScene {
     tree: T0Tree,
     worker: StreamWorker,
     resident: ResidentSet,
+    /// Per-leaf centroid (from the leaf node records), for session 004's
+    /// distance-priority admission order.
+    leaf_centers: Vec<DVec3>,
     /// Leaves with an outstanding worker request. Survives eviction (the read
     /// cannot be cancelled; a stale arrival is dropped on ingest) so a leaf is
     /// never requested twice — duplicate arrivals used to overwrite the
@@ -49,10 +52,22 @@ impl OctreeScene {
         let worker = StreamWorker::spawn(leaves, fh);
         let mut free = Vec::new();
         free.push((0, gpu_cap));
+        // Leaf centroids live on the leaf NODE records (LeafIdx is disk-layout
+        // only); one pass over <=~10^3 nodes at init, never per frame.
+        let mut leaf_centers = vec![DVec3::ZERO; tree.leaves.len()];
+        for n in &tree.nodes {
+            if n.is_leaf() {
+                let id = n.leaf_id as usize;
+                if id < leaf_centers.len() {
+                    leaf_centers[id] = n.center();
+                }
+            }
+        }
         Ok(Self {
             tree,
             worker,
             resident: ResidentSet::new(gpu_cap),
+            leaf_centers,
             inflight: HashSet::new(),
             deferred: HashSet::new(),
             free,
@@ -105,6 +120,19 @@ impl OctreeScene {
     ) -> FrameStats {
         let planes: [Vec4; 6] = frustum_planes(vp);
         self.tree.cull(cam, &planes, m0, &mut self.desired);
+        // Session 004: distance-priority admission. reconcile fills capacity
+        // in `desired` order; leaf-id (depth-aligned Morton) order is spatially
+        // clumped, so a cap below the desired set unloaded whole sky REGIONS —
+        // the diagonal wedge in the s002 shot. Nearest-first makes the tail
+        // the farthest shells instead: uniform thinning, no wedge.
+        let centers = &self.leaf_centers;
+        self.desired.sort_by(|&a, &b| {
+            let da = (centers[a as usize] - cam).length_squared();
+            let db = (centers[b as usize] - cam).length_squared();
+            da.partial_cmp(&db)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(&b))
+        });
         let leaf_counts: Vec<u32> = self.tree.leaves.iter().map(|l| l.count).collect();
         let desired_set: HashSet<u32> = self.desired.iter().copied().collect();
 
