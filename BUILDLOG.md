@@ -906,3 +906,106 @@ u32 fallback only if float atomics probe fails (→ ADR-0007); delete billboards
 only after parity gates pass, in the same iteration.
 
 **Commit:** `03d5198`
+
+---
+
+## Session 008 — 2026-10-24 — Iteration 2 (measurement hygiene + the HDR chain)
+
+**Goal:** s008 steps 0–1 of the ADR-0002 order: close the s007 0.594 ms phantom
+class with a tested predicate; land the HDR float target + tonemap pass (the
+rasteriser prerequisite) with a photometric parity gate against the LDR goldens.
+
+**Started from:** commit `5a4a7c2`, sandbox NOT reset this time (toolchain,
+`etl/build/`, `target/` all survived). Resume: tests 30/30, orion_wide shot
+byte-identical to the s007-after golden (mean-Δ 0.000), bench drift explained by
+the host (unchanged since s007 close-out).
+
+**Done:**
+- **Step 0 — the phantom, closed as a class.** Code reading showed the bench
+  prefers GPU timestamps when ≥0.01 ms; llvmpipe timestamps are documented
+  garbage, and 0.594 ms is garbage that cleared that floor inside a ~50 ms
+  readback-synced wall. ~15 reproduction attempts (cold/warm, frames 1/3/10)
+  never re-triggered it, so per the plan the CLASS was fixed, not the ghost:
+  `select_frame_ms(gpu_frame, gpu_stars, cpu_wall)` in `frame_graph.rs` — GPU
+  values trusted only inside `[max(cpu*0.02, 0.01), cpu*1.05+0.5]`; the floor
+  rejects >50x-under-wall garbage (0.594-in-50), the ceiling rejects
+  over-wall impossibilities; real-GPU CPU-bound ratios (0.3 ms GPU in a 2 ms
+  wall = 0.15) stay trusted. 5 unit tests pin phantom/fallback/over-wall/
+  witness-order. Bench log gains `frame_ms`/`frame_ms_source` (cpu_wall on
+  llvmpipe, as expected). Commit `49647be`.
+- **Step 1 — HDR chain.** Stars now accumulate LINEAR radiance in an
+  `Rgba16Float` target (probe-gated via `get_texture_format_features`;
+  `Rgba8Unorm` fallback keeps the identical chain without headroom; llvmpipe
+  reports hdr=true). New `tonemap` pass (frame-graph slot 5, the pre-allocated
+  `tonemap_fsr2` slot): fullscreen triangle, `textureLoad`, exposure multiply,
+  clamp, sRGB OETF in-shader; LDR target and the windowed surface are
+  NON-srgb so nothing double-encodes (surface-format preference added; egui's
+  sRGB-encoded colours are now correct on it, and the overlay moved into its
+  own Load pass). Exposure moved out of `stars.wgsl` into the tonemap uniform
+  (linear, so sum-then-scale == scale-then-sum up to fp distributivity).
+  `shaders/tonemap.wgsl` + Rust mirror (`srgb_oetf`, `tonemap_channel`) with
+  anchor/monotonic/exposure-clamp tests; curve deliberately clamp+OETF (parity
+  first; filmic knees belong with the glare/exposure work).
+- **Parity gate (the point of the refactor):** vs committed LDR goldens —
+  orion_wide mean-Δ **0.0017/255** (max 2), t0@1.5M **0.0213** (max 3),
+  changed(>8) **0.000%** both; i.e. float16 rounding only. Lit-count deltas
+  0.45%/4.8% are threshold sensitivity (faint px at ±1–3/255 crossing bg+8),
+  recorded, not photometric. Tolerances (mean-Δ ≤1.0, changed ≤2%) pass with
+  ~100x margin — these become the rasteriser parity gate in s009.
+- **G2 made host-rate-independent.** The first HDR fly-test FAILed G2 at 20 s
+  (settle >2 s) then PASSed on re-run: at 1.2 fps the 2 s wall window is ~2–3
+  frames, and the HDR fullscreen tax pushed frame cost ~20% up — the wall form
+  was measuring RASTER speed, not stream health. G2 is now dual: wall ≤2 s
+  (target form, PLAN) OR settle_frames ≤3 (stream-health proxy); both printed.
+  Re-runs: PASS at both caps with settle_frames=1 (streaming pristine).
+- Fly-tests 60,50 @1.5 M/3 M on the HDR chain: PASS (G1 1,062,768/1,528,033;
+  G2 0.593/0.887 s; 302.6/347.8 MB; per-cap CSVs committed). Tests 33/33,
+  clippy clean incl. `--all-targets` (after fixing my own doc-lazy-continuation,
+  collapsible-if, test-module-placement, unused-mut nits).
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| phantom class | 0.594 ms garbage could reach rows | **impossible** (predicate + 5 tests) | hygiene ✔ |
+| HDR parity orion_wide / t0 (mean-Δ) | n/a (LDR) | **0.0017 / 0.0213 per 255** | ≤1.0 ✔ |
+| changed px (>8) both scenes | — | **0.000%** | ≤2% ✔ |
+| fly G1/G2 @1.5 M (HDR) | 1.043M / 0.462 s | **1.063M / 0.593 s, 1 frame** | ✔ |
+| fly G1/G2 @3 M (HDR) | 1.542M / 0.887 s→0.644 | **1.528M / 0.887 s, 1 frame** | ✔ |
+| orion_wide frame ms (this host) | 59.3 (LDR) | **190.8 (HDR)** | n/a — llvmpipe 16f tax, see blockers |
+| t0 frame ms (this host) | 430.0 (LDR) | **442.3 (HDR)** | stream-bound, tax hidden ✔ |
+
+**Blockers hit:**
+- **llvmpipe Rgba16Float fullscreen tax ~3–4x 8-bit**: orion_wide 183.5 ms
+  @1440p vs 29.0 @720p (superlinear pixel scaling ⇒ the 16f clear+blend+load
+  is fullscreen-bound); pre-HDR LDR was 39–60 ms. t0 (stream/sprite-bound)
+  shows +3% only. Titan has native float — this is ADR-0010's sandbox≠perf
+  clause in action; recorded so nobody "optimises" it here.
+- HDR texture needed `TEXTURE_BINDING` usage for the tonemap `textureLoad`
+  (create_bind_group error said so plainly).
+- egui-wgpu 0.37 still wants a `'static` render-pass borrow — the overlay's
+  new standalone pass reuses the old `forget_lifetime()` trick.
+- G2 wall-form flakiness (above) — harness defect, not streaming defect;
+  dual criterion + both numbers printed.
+
+**Not done / discovered work:**
+- The rasteriser itself: binning + tile shader + photometric/shimmer gates +
+  billboard deletion = s009 (float-atomics probe first; ADR-0007 if needed).
+- Filmic tonemap curve + glare pyramid remain later It.2 (parity-first choice
+  recorded in tonemap.rs docs).
+- Target-machine items unchanged (windowed first run, astrometry, It.1 exit
+  review per PLAN 16.7).
+
+**Screenshot:** `docs/build/shots/2026-10-24-iter2-s008-hdr-orion-wide.png`
+(+ `-hdr-t0-m13-cap1p5m.png`, `-hdr-flytest-cap1p5m-{mid,end}`,
+`-hdr-flytest-cap3m-{mid,end}`)
+
+**Next (precise):** Session 009 per STATUS.next_action: probe float atomics on
+both backends (ADR-0007 decision first if unavailable); 8×8 tile binning from
+the culled set (CPU-side on llvmpipe, compute-swappable structure); tile
+rasteriser with analytic disc-pixel coverage + perspective-correct solid angle
++ half-res depth prepass, accumulating into the s008 HDR target; gates =
+single-star flux vs analytic solid angle <1% (centre + extreme FOV), golden
+parity within s008 tolerances, sub-pixel-drift shimmer variance beating the
+billboard path, fly/tests/clippy green; delete billboards only after all pass.
+
+**Commit:** `d1fb407`
