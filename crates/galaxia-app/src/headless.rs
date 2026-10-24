@@ -189,11 +189,19 @@ pub async fn run(cli: &Cli) -> Result<()> {
             "octree scene final frame"
         );
     }
-    let valid = |v: Option<f32>| v.filter(|x| *x >= 0.01);
-    let stars_ms = valid(last_gpu.per_pass.get(1).copied().flatten());
-    let frame_ms = valid(last_gpu.frame_gpu_ms)
-        .or(stars_ms)
-        .unwrap_or(last_cpu_ms as f32);
+    let (frame_ms, frame_ms_source) = galaxia_render::select_frame_ms(
+        last_gpu.frame_gpu_ms,
+        last_gpu.per_pass.get(1).copied().flatten(),
+        last_cpu_ms as f32,
+    );
+    // star_raster column: same plausibility range applied to the stars pass
+    let (_, star_src) = galaxia_render::select_frame_ms(
+        None,
+        last_gpu.per_pass.get(1).copied().flatten(),
+        last_cpu_ms as f32,
+    );
+    let stars_ms = (star_src == "gpu_stars")
+        .then(|| last_gpu.per_pass.get(1).copied().flatten().unwrap_or_default());
     let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
 
     if cli.bench {
@@ -216,7 +224,9 @@ pub async fn run(cli: &Cli) -> Result<()> {
         scene = %cli.scene,
         stars = src.stars.len(),
         cpu_ms = last_cpu_ms,
-        gpu_stars_ms = stars_ms,
+        gpu_frame_ms = last_gpu.frame_gpu_ms,
+        frame_ms = frame_ms,
+        frame_ms_source = frame_ms_source,
         "headless run complete"
     );
     Ok(())

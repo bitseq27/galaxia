@@ -11,7 +11,7 @@ pub mod offscreen;
 pub mod star_pass;
 pub mod timing;
 
-pub use frame_graph::{FrameGraph, PassTimings};
+pub use frame_graph::{select_frame_ms, FrameGraph, PassTimings};
 pub use gpu::GpuContext;
 pub use hot_reload::ShaderWatcher;
 pub use offscreen::OffscreenTarget;
