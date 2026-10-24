@@ -787,3 +787,122 @@ as a pure galaxia-core function with the §17 dE<3 unit test, swapped into
 orion_wide and t0 shots. Rasteriser itself only after 1–3 are green+recorded.
 
 **Commit:** `900c3bb`
+
+---
+
+## Session 007 — 2026-10-24 — Iteration 2 (BEAUTIFUL kickoff: timers, ADR-0002, Harre-Heller, recolour re-fetch)
+
+**Goal:** It.2 kickoff per s006's `next_action`: retire the timer debt, decide the
+rasteriser question with an ADR, land the Harre-Heller colour chain — then close
+the loop the colour swap opens (T0 bins carry colours; a new chain means
+re-quantising, and raw CSVs are deleted by design, so: recolour re-fetch).
+
+**Started from:** commit `b51cf13` — recovered by RE-CLONE after a sandbox reset
+that dropped `.git`, `docs/build/` and `etl/build/` (snapshot-excluded names) and
+left a stale s006-era tree behind; the stale tree had zero unique content
+(verified by diff) and was discarded. **Session hygiene note:** steps 1–3 below
+were executed and COMMITTED by an earlier instance of this session that died
+before writing any record (no BUILDLOG entry, no measurements rows, STATUS still
+at s006). This entry closes session 007 in full; measurements rows for steps 1–3
+are marked RECONSTRUCTED and sourced from the commit messages + code.
+
+**Done:**
+- **Step 1 (commit `428360c`):** GpuTimers double-buffered — two (query set,
+  resolve buffer, read buffer) triples alternate per frame; `poll_results`
+  drives map callbacks with `PollType::Poll` (non-blocking) instead of
+  `WaitIndefinitely`; resolve skips only when BOTH sets are airborne (old code
+  skipped every other frame). Tests `ms_guards` +
+  `double_buffered_readback_never_skips_or_blocks` on a real device. It.0 debt
+  retired; the PLAN non-negotiable "never block the render thread on I/O" now
+  holds for timers too.
+- **Step 2 (commit `b7f1bc7`):** **ADR-0002 accepted** — the §7.3 compute-tile
+  software rasteriser becomes THE star pass in It.2. Measured basis: billboard
+  additive overdraw is fill-bound (t0 215–230 ms @1.5 M resident on llvmpipe vs
+  22–24 ms for 10 k stars; ~610 ms @3 M fly frames), while PLAN §6.2 allots
+  5.5 ms/10 M on Titan *assuming* the §7.3 approach. Billboards stay behind a
+  flag until golden-shot + photometric gates pass; HDR float target promoted to
+  prerequisite; u32 fixed-point fallback = conditional ADR-0007.
+- **Step 3 (commit `b51cf13`):** Harre-Heller (2021) colour chain replaces the
+  It.0 crude curve. `etl/make_hh_lut.py` generates ONE LUT for Rust
+  (`color_hh_table.rs`) + the Python ETL mirror from committed vendor sources
+  (HH Zenodo 10.5281/zenodo.4090873 CC-BY-4.0 grid + Table 5 transcription,
+  cross-validated row-by-row; PM2013 dwarf Bp-Rp bridge). Join on SPECTRAL TYPE
+  label after measuring that the PM↔HH ~50 K Teff offset costs dE2000 5.2 at
+  the F9V white-point cliff (gate 3). The generator caught a genuine
+  published-source conflict (typeset Table 5 F9V RGB = channel-rotation typo of
+  the Zenodo grid row; override recorded with evidence). galaxia-core:
+  `bp_rp_to_linear_srgb` + Lab/dE2000 + 20-reference-star gate (dE2000 < 3,
+  measured ~0), anchor-exactness, Lab monotonicity, NaN→UNKNOWN, clamps.
+  Tests 25/25. orion_wide before/after: 0.39% px changed.
+- **Close-out (this instance): the recolour re-fetch.** `etl/build/` was lost to
+  the reset anyway, so the re-fetch cost was unavoidable: archived the s006
+  crude-colour manifest, re-fetched the full cone with the HH quantiser in 6
+  deadline-chunks (~2 h): **Σ(rows+skipped) = 15,573,949, delta +0 — gate PASS
+  a second time**; region tree identical to s006 (877 regions / 459 leaves;
+  rows+skipped identical 877/877) with baked sha CHANGED 877/877 — recolour
+  applied everywhere, geometry untouched. Per-bin size+sha re-verified.
+  Literature bin re-baked HH (sha b7fc6703…). T0 re-bake: 11,029,150 / 403 /
+  471 / 460, sha256_stars 2c1d579e… (structure identical to s006 as predicted).
+- **Gates on the recoloured dataset:** t0 shots @1.5 M + 3 M caps (settled,
+  pending=0; completes the before/after pair — recolour delta vs the committed
+  crude before-shot: mean-Δ 0.045/255, 0.37% px); `--fly-test 60,50` **PASS at
+  both caps** (G1 1,043,195 / 1,541,625; G2 0.462 / 0.644 s; 3,020/3,033 pc);
+  wedge spread 0.0047 @1.5 M / 0.0065 @3 M; 1.5 M/3 M lit ratio 86.7%;
+  resume orion_wide render **byte-identical** to the committed s007-after shot
+  (mean-Δ 0.000) — the HH path reproduces bit-exactly across hosts.
+- Resume protocol on the recovered clone: tests 25/25, clippy clean, bench drift
+  investigated (see Blockers).
+
+**Measured:**
+| metric | before | after | budget |
+|---|---|---|---|
+| timer readback | single-buffered, blocking, skips alternate frames | **double-buffered, non-blocking, no skips** | non-negotiable ✔ |
+| colour gate dE2000 (20 ref stars) | n/a (crude) | **~0** | < 3 ✔ |
+| recolour visual delta | — | **0.37–0.39% px** (blue desaturation) | record ✔ |
+| cone Σ(rows+skipped), HH quantiser | 15,573,949 (s006 crude) | **15,573,949 (Δ +0)** | exact ✔ |
+| baked sha changed (recolour) | — | **877/877 regions** | record ✔ |
+| fly G1/G2 @1.5 M (slow host) | 1.049M / 0.257 s (s006 host) | **1.043M / 0.462 s** | >0 / ≤2 s ✔ |
+| fly G1/G2 @3 M (slow host) | 1.542M / 0.334 s | **1.542M / 0.644 s** | ✔ |
+| wedge quadrant spread @1.5 M | 0.0050 (s006) | **0.0047** | uniform ✔ |
+| orion_wide / t0 frame ms (THIS host) | 23.2 / 215–227 (s007 host) | **59.3 / 430.0** | n/a — host class (2.5 GHz, no SHA-NI; sha ref 182 vs 327) |
+
+**Blockers hit:**
+- **Sandbox reset mid-session-family:** `.git`, `docs/build/`, `etl/build/` do
+  not survive snapshots (excluded names). Recovery = re-clone (GitHub is
+  authoritative) + re-fetch data. The half-restored tree was stale s006 —
+  diffing before trusting it saved a wrong-direction merge. Recorded in STATUS
+  sandbox rules so the next session checks first.
+- The earlier instance died between commits and recording — hence the
+  RECONSTRUCTED rows and this combined entry. Rule reaffirmed: commit the
+  RECORD in the same sitting as the work.
+- A SIGKILL landed on chunk 2 of the re-fetch at startup (interrupted tool
+  call): lost nothing (regions commit atomically; manifest gate key is written
+  only on clean exit — a gate-less manifest after a kill is NOT corruption).
+- Fresh clone had no git identity → set to match history ("galaxia build
+  session" <build-session@galaxia.local>).
+- Bench drift on resume (+48% vs s007 rows) investigated per the 10% rule:
+  host changed (Xeon 2.50 GHz, no sha_ni, sha256 ref 182–195 MB/s vs 327) while
+  content verified byte-identical → host class, recorded, not a regression.
+  Separately: a phantom **0.594 ms** first-bench frame (impossible on llvmpipe)
+  excluded from medians — open item for s008 (timer cold-start semantics).
+
+**Not done / discovered work:**
+- The rasteriser itself (ADR-0002 order: HDR target → binning → tile shader) =
+  s008, with the 0.594 anomaly as step 0.
+- Target-machine items unchanged (windowed run, astrometry gate, It.1 exit
+  review per PLAN 16.7).
+
+**Screenshot:** `docs/build/shots/2026-10-24-iter2-s007-after-t0-m13-cap1p5m.png`
+(+ `-cap3m`, `-flytest-cap1p5m-{mid,end}`, `-flytest-cap3m-{mid,end}`; the
+orion_wide before/after pair and before-t0 shot were committed by step 3)
+
+**Next (precise):** Session 008 per STATUS.next_action: (0) reproduce/explain the
+0.594 ms first-bench phantom (timing.rs double-buffer cold start) and pin with a
+test; (1) HDR float target + exposure/tonemap (ADR-0002 prerequisite) with a
+photometric parity gate vs today's LDR shots (tolerance defined from the
+before/after statistics); (2) 8×8 tile binning pass; (3) tile rasteriser with
+analytic coverage + perspective-correct solid angle + half-res depth test,
+u32 fallback only if float atomics probe fails (→ ADR-0007); delete billboards
+only after parity gates pass, in the same iteration.
+
+**Commit:** `03d5198`
