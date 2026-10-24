@@ -64,6 +64,7 @@ pub struct FrameUniforms {
 const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 128);
 
 pub struct StarPass {
+    format: wgpu::TextureFormat,
     pub pipeline: wgpu::RenderPipeline,
     pub layout: wgpu::PipelineLayout,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -76,7 +77,11 @@ pub struct StarPass {
 }
 
 impl StarPass {
-    pub fn new(device: &Arc<wgpu::Device>, wgsl_source: &str) -> Result<Self> {
+    pub fn new(
+        device: &Arc<wgpu::Device>,
+        wgsl_source: &str,
+        target_format: wgpu::TextureFormat,
+    ) -> Result<Self> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("stars.wgsl"),
             source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
@@ -152,7 +157,7 @@ impl StarPass {
                     // Set per-surface at creation time by the caller? No — the
                     // skeleton renders to a single known format chosen in
                     // `pipeline_for_format`. Callers must use that.
-                    format: PIPELINE_FORMAT,
+                    format: target_format,
                     blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -192,6 +197,7 @@ impl StarPass {
         });
 
         Ok(Self {
+            format: target_format,
             pipeline,
             layout,
             bind_group_layout: bgl,
@@ -208,7 +214,7 @@ impl StarPass {
     /// Returns Err with the naga/wgpu validation message if the shader is broken —
     /// the caller keeps the OLD pipeline so a typo never kills the running app.
     pub fn try_rebuild(&mut self, new_source: &str) -> Result<()> {
-        let fresh = StarPass::new(&self.device, new_source)?;
+        let fresh = StarPass::new(&self.device, new_source, self.format)?;
         // Move the new pipeline/bindings in; keep the star buffer contents by
         // re-uploading (star buffers are small in It.0; It.1 streams properly).
         self.pipeline = fresh.pipeline;
@@ -331,4 +337,14 @@ impl StarPass {
 }
 
 /// The single surface/target format the skeleton renders to.
+/// s008 HDR chain formats (ADR-0002 prerequisite):
+/// stars accumulate LINEAR radiance in the HDR target (additive ONE/ONE);
+/// the tonemap pass converts HDR -> LDR display bytes (sRGB OETF in shader).
+pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// When the adapter cannot render to Rgba16Float: same chain, no headroom.
+pub const HDR_FALLBACK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// Display/target format AFTER tonemap (shader applies the sRGB OETF, so the
+/// surface/view must NOT be an srgb format — no double encode).
+pub const LDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+/// Retained alias for the pre-s008 single-target path (tests/docs).
 pub const PIPELINE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;

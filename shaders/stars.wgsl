@@ -96,7 +96,8 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     // Faint stars contribute ~their flux; clusters of them integrate into a
     // milky glow instead of clipping. HDR + tonemap (It.2) replaces this curve.
     // Brightness is flux at the CAMERA (m_app), not at the Sun (s003 fix).
-    out.bright = gate * clamp(pow(10.0, -0.4 * (m_app - 6.0)), 0.0, 14.0) * u.exposure;
+    // s008: exposure lives in the tonemap pass (HDR chain); stars emit raw radiance.
+    out.bright = gate * clamp(pow(10.0, -0.4 * (m_app - 6.0)), 0.0, 14.0);
     return out;
 }
 

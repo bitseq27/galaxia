@@ -10,8 +10,10 @@ pub mod hot_reload;
 pub mod offscreen;
 pub mod star_pass;
 pub mod timing;
+pub mod tonemap;
 
 pub use frame_graph::{select_frame_ms, FrameGraph, PassTimings};
+pub use tonemap::TonemapPass;
 pub use gpu::GpuContext;
 pub use hot_reload::ShaderWatcher;
 pub use offscreen::OffscreenTarget;

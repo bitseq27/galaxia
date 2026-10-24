@@ -10,6 +10,9 @@ pub struct GpuContext {
     pub queue: Arc<wgpu::Queue>,
     /// True when the adapter supports timestamp queries (GPU timing).
     pub has_timestamps: bool,
+    /// True when Rgba16Float is renderable (s008 HDR chain). False => the HDR
+    /// slot degrades to Rgba8Unorm (chain identical, no >1 headroom).
+    pub hdr_capable: bool,
     pub adapter_info: String,
 }
 
@@ -54,6 +57,11 @@ impl GpuContext {
         let features = adapter.features() & want;
         let has_timestamps = features.contains(wgpu::Features::TIMESTAMP_QUERY)
             && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
+        // s008 HDR chain: float render target for radiance accumulation.
+        let hdr_capable = adapter
+            .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+            .allowed_usages
+            .contains(wgpu::TextureUsages::RENDER_ATTACHMENT);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -67,13 +75,14 @@ impl GpuContext {
             .await
             .context("request_device failed")?;
 
-        tracing::info!(adapter = %adapter_info, timestamps = has_timestamps, "GPU ready");
+        tracing::info!(adapter = %adapter_info, timestamps = has_timestamps, hdr = hdr_capable, "GPU ready");
         Ok(Self {
             instance,
             adapter: Arc::new(adapter),
             device: Arc::new(device),
             queue: Arc::new(queue),
             has_timestamps,
+            hdr_capable,
             adapter_info,
         })
     }

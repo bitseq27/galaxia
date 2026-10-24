@@ -10,7 +10,7 @@ use crate::Cli;
 use anyhow::Result;
 use galaxia_render::star_pass::FrameUniforms;
 use galaxia_render::timing::GpuTimers;
-use galaxia_render::{FrameGraph, GpuContext, PassTimings, ShaderWatcher, StarPass};
+use galaxia_render::{TonemapPass, FrameGraph, GpuContext, PassTimings, ShaderWatcher, StarPass};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -51,6 +51,10 @@ struct App {
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
+    // s008 HDR chain (windowed): hdr radiance target sized to the surface,
+    // recreated on resize; tonemap pass built once the surface format is known.
+    hdr: Option<(wgpu::Texture, wgpu::TextureView, wgpu::TextureFormat, u32, u32)>,
+    tonemap: Option<TonemapPass>,
     show_overlay: bool,
     star_count: usize,
     provenance: String,
@@ -75,7 +79,12 @@ impl App {
         let source = watcher
             .changed()
             .unwrap_or_else(|| std::fs::read_to_string(&cli.shader).unwrap());
-        let mut star_pass = StarPass::new(&gpu.device, &source)?;
+        let hdr_format = if gpu.hdr_capable {
+            galaxia_render::star_pass::HDR_FORMAT
+        } else {
+            galaxia_render::star_pass::HDR_FALLBACK_FORMAT
+        };
+        let mut star_pass = StarPass::new(&gpu.device, &source, hdr_format)?;
 
         let src = star_data::load_stars(cli.stars_csv.as_deref(), &cli.scene);
         tracing::info!(stars = src.stars.len(), provenance = %src.provenance, "star source");
@@ -131,6 +140,8 @@ impl App {
             egui_ctx: egui::Context::default(),
             egui_state: None,
             egui_renderer: None,
+            hdr: None,
+            tonemap: None,
             show_overlay: true,
             star_count,
             provenance,
@@ -159,7 +170,24 @@ impl App {
         let mut config = surface
             .get_default_config(&self.gpu.adapter, size.width.max(2), size.height.max(2))
             .ok_or_else(|| anyhow::anyhow!("surface unsupported on this adapter"))?;
-        // The skeleton pipeline is built for Bgra8UnormSrgb; if the surface
+        // s008: prefer a NON-srgb surface format — the tonemap pass applies the
+        // sRGB OETF in-shader (and egui writes sRGB-encoded colours directly).
+        {
+            let caps = surface.get_capabilities(&self.gpu.adapter);
+            let preferred = [
+                galaxia_render::star_pass::LDR_FORMAT,
+                wgpu::TextureFormat::Rgba8Unorm,
+            ];
+            if let Some(f) = preferred.iter().find(|f| caps.formats.contains(f)) {
+                config.format = *f;
+            } else {
+                tracing::warn!(
+                    surface_format = ?config.format,
+                    "no non-srgb surface format available; tonemap will double-encode"
+                );
+            }
+        }
+        // The skeleton pipeline was built for Bgra8UnormSrgb; if the surface
         // prefers something else, keep its preference and rebuild the pipeline
         // format via view_formats — for It.0 we simply require the format.
         if config.format != galaxia_render::star_pass::PIPELINE_FORMAT {
@@ -233,6 +261,43 @@ impl App {
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let size = window.inner_size();
         let (w, h) = (size.width.max(2), size.height.max(2));
+
+        // s008 HDR chain: radiance target sized to the surface (recreated on
+        // resize); tonemap pass rebuilt with it (binds the hdr view).
+        if self.hdr.as_ref().map(|t| (t.3, t.4)) != Some((w, h)) {
+            use galaxia_render::star_pass::{HDR_FALLBACK_FORMAT, HDR_FORMAT};
+            let format = if self.gpu.hdr_capable { HDR_FORMAT } else { HDR_FALLBACK_FORMAT };
+            let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("window-hdr"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let hview = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let surface_format = self
+                .surface_config
+                .as_ref()
+                .map(|c| c.format)
+                .unwrap_or(galaxia_render::star_pass::LDR_FORMAT);
+            let mut tm = match TonemapPass::new(&self.gpu.device, format, surface_format) {
+                Ok(tm) => tm,
+                Err(e) => {
+                    tracing::error!(error = %e, "tonemap pass creation failed; skipping frame");
+                    return;
+                }
+            };
+            tm.bind(&self.gpu.device, &hview);
+            self.tonemap = Some(tm);
+            self.hdr = Some((tex, hview, format, w, h));
+        }
+        self.tonemap
+            .as_mut()
+            .unwrap()
+            .set_exposure(&self.gpu.queue, self.cli.exposure);
 
         // ── camera integrate ────────────────────────────────────────────────
         let dt = self.last_frame.elapsed().as_secs_f64().clamp(1e-4, 0.25);
@@ -339,10 +404,11 @@ impl App {
                 }),
                 store: wgpu::StoreOp::Store,
             };
+            let hdr_view: &wgpu::TextureView = &self.hdr.as_ref().unwrap().1;
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: hdr_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: load,
@@ -374,19 +440,56 @@ impl App {
                 self.star_pass.draw(&mut rpass);
             }
             self.timers.end(&mut rpass, 1);
-            // forget_lifetime detaches the encoder borrow so egui-wgpu can
-            // hold the pass (it may re-open it for paint callbacks). Safe:
-            // encoder and pass are locals here, dropped in declaration order.
-            let mut rpass_static = rpass.forget_lifetime();
-            if self.show_overlay {
-                self.timers.begin(&mut rpass_static, 6);
-                self.egui_renderer
-                    .as_ref()
-                    .unwrap()
-                    .render(&mut rpass_static, &clipped, &screen_desc);
-                self.timers.end(&mut rpass_static, 6);
-            }
-            drop(rpass_static);
+        }
+        {
+            // s008: HDR -> surface (exposure + clamp + sRGB OETF), slot 5.
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("tonemap"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            self.timers.begin(&mut rpass, 5);
+            self.tonemap.as_ref().unwrap().draw(&mut rpass);
+            self.timers.end(&mut rpass, 5);
+        }
+        if self.show_overlay {
+            // egui writes sRGB-encoded colours directly: correct on the
+            // non-srgb surface format chosen at configure time (s008).
+            let rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("overlay"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // egui-wgpu 0.37 wants a 'static pass borrow (same trick as pre-s008)
+            let mut rpass = rpass.forget_lifetime();
+            self.timers.begin(&mut rpass, 6);
+            self.egui_renderer
+                .as_ref()
+                .unwrap()
+                .render(&mut rpass, &clipped, &screen_desc);
+            self.timers.end(&mut rpass, 6);
         }
         let did_resolve = self.timers.resolve(&mut encoder);
 

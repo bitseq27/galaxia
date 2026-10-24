@@ -32,13 +32,21 @@ pub fn camera_for_scene(scene: &str) -> Camera {
 
 pub async fn run(cli: &Cli) -> Result<()> {
     let gpu = GpuContext::new(true).await?;
-    let target = OffscreenTarget::new(&gpu.device, cli.width, cli.height)?;
+    let target = OffscreenTarget::new(&gpu.device, cli.width, cli.height, gpu.hdr_capable)?;
+    // s008 HDR chain: stars -> hdr target; tonemap -> LDR readback target.
+    let mut tonemap = galaxia_render::TonemapPass::new(
+        &gpu.device,
+        target.hdr_format,
+        galaxia_render::star_pass::LDR_FORMAT,
+    )?;
+    tonemap.bind(&gpu.device, &target.hdr_view);
+    tonemap.set_exposure(&gpu.queue, cli.exposure);
 
     // Shader + hot-reload watcher (headless reads it once; the watcher keeps
     // the same code path as windowed mode).
     let mut watcher = ShaderWatcher::new(&cli.shader)?;
     let source = watcher.changed().unwrap_or_else(|| std::fs::read_to_string(&cli.shader).unwrap());
-    let mut star_pass = StarPass::new(&gpu.device, &source)?;
+    let mut star_pass = StarPass::new(&gpu.device, &source, target.hdr_format)?;
     let use_t0 = cli.scene.starts_with("t0")
         && std::path::Path::new("etl/build/t0/tree_meta.json").exists();
     let mut octree: Option<crate::octree_scene::OctreeScene> = None;
@@ -107,7 +115,7 @@ pub async fn run(cli: &Cli) -> Result<()> {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("headless-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.view,
+                    view: &target.hdr_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -140,6 +148,28 @@ pub async fn run(cli: &Cli) -> Result<()> {
                 star_pass.draw(&mut rpass);
             }
             timers.end(&mut rpass, 1);
+        }
+        {
+            // s008: HDR -> LDR display (exposure + clamp + sRGB OETF), slot 5.
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("tonemap"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            timers.begin(&mut rpass, 5);
+            tonemap.draw(&mut rpass);
+            timers.end(&mut rpass, 5);
         }
         target.encode_copy(&mut encoder);
         let did_resolve = timers.resolve(&mut encoder);

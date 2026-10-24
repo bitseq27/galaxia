@@ -26,7 +26,7 @@ pub fn default_passes() -> Vec<PassSpec> {
         PassSpec { name: "star_raster_sw",slot: 2, enabled: false, planned_in: "It.2" },
         PassSpec { name: "glare_pyramid", slot: 3, enabled: false, planned_in: "It.2" },
         PassSpec { name: "volumetrics",   slot: 4, enabled: false, planned_in: "It.4" },
-        PassSpec { name: "tonemap_fsr2",  slot: 5, enabled: false, planned_in: "It.2" },
+        PassSpec { name: "tonemap_fsr2",  slot: 5, enabled: true,  planned_in: "It.2" }, // tonemap half live since s008; FSR2 pending
         PassSpec { name: "overlay",       slot: 6, enabled: true,  planned_in: "It.0" },
     ]
 }

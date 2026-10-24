@@ -6,9 +6,16 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::star_pass::PIPELINE_FORMAT;
+use crate::star_pass::{LDR_FORMAT, HDR_FORMAT, HDR_FALLBACK_FORMAT};
 
+/// s008 HDR chain: stars accumulate linear radiance in `hdr` (Rgba16Float
+/// where the adapter allows, else Rgba8Unorm); the tonemap pass writes
+/// display-encoded bytes to `texture`/`view` (Bgra8Unorm, NON-srgb), which is
+/// also the screenshot/readback source.
 pub struct OffscreenTarget {
+    pub hdr: wgpu::Texture,
+    pub hdr_view: wgpu::TextureView,
+    pub hdr_format: wgpu::TextureFormat,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub width: u32,
@@ -18,14 +25,26 @@ pub struct OffscreenTarget {
 }
 
 impl OffscreenTarget {
-    pub fn new(device: &Arc<wgpu::Device>, width: u32, height: u32) -> Result<Self> {
+    pub fn new(device: &Arc<wgpu::Device>, width: u32, height: u32, hdr_capable: bool) -> Result<Self> {
+        let hdr_format = if hdr_capable { HDR_FORMAT } else { HDR_FALLBACK_FORMAT };
+        let hdr = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen-hdr"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: hdr_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let hdr_view = hdr.create_view(&wgpu::TextureViewDescriptor::default());
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: PIPELINE_FORMAT,
+            format: LDR_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -38,6 +57,9 @@ impl OffscreenTarget {
             mapped_at_creation: false,
         });
         Ok(Self {
+            hdr,
+            hdr_view,
+            hdr_format,
             texture,
             view,
             width,
