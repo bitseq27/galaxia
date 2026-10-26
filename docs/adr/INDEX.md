@@ -55,5 +55,6 @@ in six months by someone who does not remember.>
 | # | Title | Status | Session |
 |---|---|---|---|
 | [0002](0002-software-rasterisation.md) | Software rasterisation over billboard/point stars (§7.3) | Accepted | 007 |
+| [0007](0007-u32-fixed-point-accumulation.md) | u32 fixed-point star accumulation (float atomics unavailable in pinned stack) | Accepted | 009 |
 | [0004](0004-orion-prototype-region.md) | Orion as the prototype region (measured count supersedes estimate) | Accepted | 001 |
 | [0010](0010-sandbox-gles-build.md) | Build sandbox: Linux + GLES/llvmpipe instead of Windows/Vulkan | Accepted | 001 |
