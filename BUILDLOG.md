@@ -1009,3 +1009,91 @@ parity within s008 tolerances, sub-pixel-drift shimmer variance beating the
 billboard path, fly/tests/clippy green; delete billboards only after all pass.
 
 **Commit:** `d1fb407`
+
+---
+
+## Session 009 — 2026-10-26 — Iteration 2 (the §7.3 tile rasteriser, v1 gated)
+
+**Goal:** s009 per STATUS: float-atomics probe → ADR-0007 → 8×8 binning → tile
+rasteriser with analytic coverage + perspective-correct solid angle → flux /
+parity / shimmer gates on the bright subset. (t0 gates + billboard deletion
+deferred to s010 by the reset-driven data loss, recorded below.)
+
+**Started from:** commit `00c7807` on a reset container: `.git`, `docs/build/`,
+`etl/build/` gone again; source tree survived and was verified render-identical
+(byte-identical orion_wide vs the s008 golden) before being wrapped in a fresh
+clone. Resume: tests 33/33, clippy clean.
+
+**Done:**
+- **Step 1 — atomics probe → ADR-0007.** naga 30 gates `atomic<f32>` behind
+  `SHADER_FLOAT32_ATOMIC`; wgpu exposes it native-only (Vulkan
+  `VK_EXT_shader_atomic_float`, Metal); **GLES never** — the sandbox could not
+  test an f32-atomic path at all. ADR-0007 accepted: u32 fixed-point is THE
+  accumulator everywhere. Amended during implementation: the tile loop gives
+  each pixel exactly one owning thread, so **plain stores** suffice (race-free,
+  deterministic) — no atomic ops at all; Q14 after Q10 fringe-rounding loss.
+- **Step 2 — binning.** `star_raster::bin_stars`: project + m_app gate +
+  radius/flux curves mirrored from stars.wgsl, 8×8 tile bbox per star,
+  deterministic order (input order, row-major tiles). `OctreeScene` gained a
+  CPU mirror (`HashMap<leaf, Arc<Vec<StarGpu>>>`, insert on ingest / remove on
+  evict) so t0 resident stars can be binned (GPU buffer is upload-only).
+- **Step 3 — rasteriser.** Compute pass (workgroup per tile, thread per pixel,
+  star-list loop) depositing `l·k(θ)·profile·coverage·colour` with exact
+  circle/rect overlap area (closed form, mirrored + tested in Rust) and
+  k(θ)=((f²+ρ²)/f²)^{3/2} (§7.3 MUST); resolve pass adds background and writes
+  the s008 HDR target; tonemap unchanged. Wired headless / fly-test / windowed
+  behind `--star-renderer=raster` (billboard default until s010 gates).
+- **Gates (bright subset):** flux conservation <1% at centre/corner/edge vs the
+  analytic integral (the test first caught MY wrong constant: πr²/5.2 vs the
+  correct πr²/2.6 — measured 51.02 vs 51.05); shimmer (sub-pixel shift
+  aperture-flux stability, `--screen-shift-px` harness): raster **0.45%** vs
+  billboard **0.65%** — but only after the 2×2 sub-pixel profile quadrature;
+  single-sample prof(center)·coverage measured **1.06% (worse than billboard)**
+  and was fixed; parity vs the s008 HDR golden: mean-Δ 0.074/255, changed(>8)
+  0.79%, lit 29,017 vs 25,841 (raster adds the disc-rim pixels the billboard's
+  centre-sampling dropped — correct photometry, documented).
+- **The compute silent-write saga (worst debug of the project so far).** The
+  compute pass wrote NOTHING through eight bisects (atomics→plain, 2D→1D
+  workgroups, dispatch counts, clear_buffer on/off, dedicated encoder+submit,
+  module split, buffer sizes, SSBO alignment). A minimal probe
+  (`--probe-compute`, kept) worked. The probe with a uniform buffer returned
+  `512000` for a write of `512000 + u32(u.width)` — **wgpu30-GLES compute reads
+  UBOs as zero**; my `tiles_x==0` then modulo-killed every workgroup, which is
+  why even unconditional sentinel stores vanished (UB in the dead-ish path).
+  Fix: scalars ride a read-only `array<f32>` storage buffer. Record this.
+- Tests 38/38 (raster math 4 + flux 1), clippy clean incl. `--all-targets`.
+
+**Measured:**
+| metric | billboard | raster v1 | gate |
+|---|---|---|---|
+| flux err vs analytic (centre/corner/edge) | n/a | **<1% all three** | <1% ✔ |
+| shimmer (aperture-flux rel-std, 4 sub-px shifts) | 0.65% | **0.45%** | raster wins ✔ |
+| parity vs s008 HDR golden (mean-Δ / changed) | — | **0.074 / 0.79%** | ≤1.0 / ≤2% ✔ |
+| orion_wide frame ms (llvmpipe, this host) | 190.8 | **596.6** | n/a — sandbox ≠ perf (ADR-0010) |
+| tests / clippy | 33/33 | **38/38 / clean** | green ✔ |
+
+**Blockers hit:**
+- The GLES compute UBO-zero trap (above) — eight red-herring bisects; the
+  probe harness is now a permanent tool.
+- Reset ate `etl/build/` again → t0 raster gates impossible this session
+  without a 2 h re-fetch; deferred to s010 step 1 with the billboard deletion
+  (ADR-0002 requires gates-then-delete in the same iteration).
+- Diagnostic residue once produced crescent stars (a mid-bisect shader backup
+  was restored over clean code); lesson re-learned: rewrite from scratch
+  instead of un-bisecting.
+
+**Not done / discovered work:**
+- t0 raster gates (fly both caps, parity, shimmer), default flip, billboard
+  deletion, half-res depth-prepass hook = s010 (STATUS next_action, precise).
+- Compute binning pass to replace CPU binning on the target (structured for it).
+- Filmic curve / glare pyramid remain later It.2.
+
+**Screenshot:** `docs/build/shots/2026-10-26-iter2-s009-raster-orion-wide.png`
+
+**Next (precise):** Session 010 per STATUS.next_action: re-fetch T0 (gate
+Σ==15,573,949) → bake → raster fly-tests @1.5M/3M + t0 parity/shimmer vs
+billboard → if green: flip default, DELETE billboard path same iteration,
+re-run full suite, new raster goldens become the reference; add the half-res
+depth-prepass hook (cleared 1.0) so It.4/It.5 plug in without raster changes.
+
+**Commit:** `4777cad`
