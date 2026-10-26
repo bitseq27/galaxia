@@ -10,6 +10,7 @@ pub mod hot_reload;
 pub mod offscreen;
 pub mod star_pass;
 pub mod timing;
+pub mod star_raster;
 pub mod tonemap;
 
 pub use frame_graph::{select_frame_ms, FrameGraph, PassTimings};
