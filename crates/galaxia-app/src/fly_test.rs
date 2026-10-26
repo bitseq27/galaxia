@@ -86,6 +86,16 @@ pub async fn run(cli: &Cli) -> Result<()> {
     )?;
     tonemap.bind(&gpu.device, &target.hdr_view);
     tonemap.set_exposure(&gpu.queue, cli.exposure);
+    let use_raster = cli.star_renderer == "raster";
+    let raster = if use_raster {
+        Some(galaxia_render::star_raster::StarRasterPass::new(
+            &gpu.device, &gpu.queue, cli.width, cli.height,
+            [0.002, 0.003, 0.010], FOV_Y_RAD, target.hdr_format,
+        )?)
+    } else {
+        None
+    };
+    let mut bin_input: Vec<(glam::DVec3, f32, [f32; 3])> = Vec::new();
 
     let mut watcher = ShaderWatcher::new(&cli.shader)?;
     let source = watcher
@@ -197,8 +207,14 @@ pub async fn run(cli: &Cli) -> Result<()> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("flytest-frame"),
             });
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        if let Some(raster) = raster.as_ref() {
+            octree.collect_stars(&mut bin_input);
+            let bin = galaxia_render::star_raster::bin_stars(
+                &bin_input, &vp, cli.width, cli.height, cli.m0,
+            );
+            raster.encode(&gpu.device, &gpu.queue, &mut encoder, &bin, &target.hdr_view)?;
+        } else {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("flytest-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target.hdr_view,

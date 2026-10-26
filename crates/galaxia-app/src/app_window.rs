@@ -55,6 +55,9 @@ struct App {
     // recreated on resize; tonemap pass built once the surface format is known.
     hdr: Option<(wgpu::Texture, wgpu::TextureView, wgpu::TextureFormat, u32, u32)>,
     tonemap: Option<TonemapPass>,
+    raster: Option<galaxia_render::star_raster::StarRasterPass>,
+    bin_input: Vec<(glam::DVec3, f32, [f32; 3])>,
+    bin_src: Vec<(glam::DVec3, f32, [f32; 3])>,
     show_overlay: bool,
     star_count: usize,
     provenance: String,
@@ -142,6 +145,9 @@ impl App {
             egui_renderer: None,
             hdr: None,
             tonemap: None,
+            raster: None,
+            bin_input: Vec::new(),
+            bin_src: src.stars.iter().map(|r| (glam::DVec3::from(r.pos_pc), r.mag, r.color)).collect(),
             show_overlay: true,
             star_count,
             provenance,
@@ -405,6 +411,44 @@ impl App {
                 store: wgpu::StoreOp::Store,
             };
             let hdr_view: &wgpu::TextureView = &self.hdr.as_ref().unwrap().1;
+            if self.cli.star_renderer == "raster" {
+                // s009 §7.3 rasteriser path (windowed; compile-verified here)
+                if self.raster.is_none() {
+                    let format = self.hdr.as_ref().unwrap().2;
+                    match galaxia_render::star_raster::StarRasterPass::new(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        w,
+                        h,
+                        [0.002, 0.003, 0.010],
+                        FOV_Y_RAD,
+                        format,
+                    ) {
+                        Ok(r) => self.raster = Some(r),
+                        Err(e) => {
+                            tracing::error!(error = %e, "raster pass init failed");
+                            return;
+                        }
+                    }
+                }
+                let vp = glam::Mat4::from_cols_array_2d(&uniforms.view_proj);
+                let m0_bin = if self.octree.is_some() { self.cli.m0 } else { 99.0 };
+                if let Some(osc) = self.octree.as_mut() {
+                    osc.collect_stars(&mut self.bin_input);
+                } else {
+                    self.bin_input.clear();
+                    self.bin_input.extend(self.bin_src.iter().copied());
+                }
+                let bin = galaxia_render::star_raster::bin_stars(
+                    &self.bin_input, &vp, w, h, m0_bin,
+                );
+                if let Err(e) = self.raster.as_ref().unwrap().encode(
+                    &self.gpu.device, &self.gpu.queue, &mut encoder, &bin, hdr_view,
+                ) {
+                    tracing::error!(error = %e, "raster encode failed");
+                    return;
+                }
+            } else {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -441,6 +485,7 @@ impl App {
             }
             self.timers.end(&mut rpass, 1);
         }
+            }
         {
             // s008: HDR -> surface (exposure + clamp + sRGB OETF), slot 5.
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

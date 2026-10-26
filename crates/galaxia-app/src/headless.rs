@@ -32,6 +32,9 @@ pub fn camera_for_scene(scene: &str) -> Camera {
 
 pub async fn run(cli: &Cli) -> Result<()> {
     let gpu = GpuContext::new(true).await?;
+    if cli.probe_compute {
+        return probe_compute(&gpu).await;
+    }
     let target = OffscreenTarget::new(&gpu.device, cli.width, cli.height, gpu.hdr_capable)?;
     // s008 HDR chain: stars -> hdr target; tonemap -> LDR readback target.
     let mut tonemap = galaxia_render::TonemapPass::new(
@@ -41,6 +44,22 @@ pub async fn run(cli: &Cli) -> Result<()> {
     )?;
     tonemap.bind(&gpu.device, &target.hdr_view);
     tonemap.set_exposure(&gpu.queue, cli.exposure);
+    // s009: §7.3 tile rasteriser (ADR-0002), flag-gated until its gates pass.
+    let use_raster = cli.star_renderer == "raster";
+    let raster = if use_raster {
+        Some(galaxia_render::star_raster::StarRasterPass::new(
+            &gpu.device,
+            &gpu.queue,
+            cli.width,
+            cli.height,
+            [0.002, 0.003, 0.010],
+            FOV_Y_RAD,
+            target.hdr_format,
+        )?)
+    } else {
+        None
+    };
+    let mut bin_input: Vec<(glam::DVec3, f32, [f32; 3])> = Vec::new();
 
     // Shader + hot-reload watcher (headless reads it once; the watcher keeps
     // the same code path as windowed mode).
@@ -106,13 +125,63 @@ pub async fn run(cli: &Cli) -> Result<()> {
             _pad5: 0.0,
             _pad6: 0.0,
         };
+        // s009 shimmer harness: sub-pixel NDC translation of the projection
+        let (shx, shy) = {
+            let mut it = cli.screen_shift_px.split(',');
+            (
+                it.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0),
+                it.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0),
+            )
+        };
+        let uniforms = if shx != 0.0 || shy != 0.0 {
+            let mut vp = glam::Mat4::from_cols_array_2d(&uniforms.view_proj);
+            let shift = glam::Mat4::from_translation(glam::Vec3::new(
+                2.0 * shx / cli.width as f32,
+                -2.0 * shy / cli.height as f32,
+                0.0,
+            ));
+            vp = shift * vp;
+            galaxia_render::star_pass::FrameUniforms {
+                view_proj: vp.to_cols_array_2d(),
+                ..uniforms
+            }
+        } else {
+            uniforms
+        };
         star_pass.write_uniforms(&gpu.queue, &uniforms);
 
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("headless-frame"),
         });
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let m0_bin = if use_t0 { cli.m0 } else { 99.0 };
+        if let Some(raster) = raster.as_ref() {
+            let vp = glam::Mat4::from_cols_array_2d(&uniforms.view_proj);
+            if let Some(osc) = octree.as_mut() {
+                let stats = osc.frame(cam.pos_pc, &vp, cli.m0, &mut star_pass, &gpu.queue);
+                osc_gpu_ranges.clear();
+                osc_gpu_ranges.extend_from_slice(osc.draw_ranges());
+                octree_stats = Some(stats);
+                osc.collect_stars(&mut bin_input);
+            } else {
+                bin_input.clear();
+                bin_input.extend(
+                    src.stars.iter().map(|r| (glam::DVec3::from(r.pos_pc), r.mag, r.color)),
+                );
+            }
+            let bin = galaxia_render::star_raster::bin_stars(
+                &bin_input,
+                &vp,
+                cli.width,
+                cli.height,
+                m0_bin,
+            );
+            if frame == 0 {
+                tracing::info!(stars = bin.stars.len(), ids = bin.tile_ids.len(),
+                               tiles = bin.tiles_x, "raster bin stats");
+            }
+            raster.encode(&gpu.device, &gpu.queue, &mut encoder, &bin, &target.hdr_view)?;
+        } else {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("headless-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target.hdr_view,
@@ -269,4 +338,134 @@ fn humantime_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap();
     format!("epoch+{}s", d.as_secs())
+}
+
+
+/// s009 diagnostic: can this backend execute a compute pass at all?
+async fn probe_compute(gpu: &GpuContext) -> Result<()> {
+    let probe_big = std::env::var("PROBE_BIG").is_ok();
+    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("probe"),
+        size: if probe_big { 2560 * 1440 * 16 } else { 16 },
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let read = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("probe-read"),
+        size: 16,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let with_uniform = std::env::var("PROBE_UNIFORM").is_ok();
+    let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("probe"),
+        source: wgpu::ShaderSource::Wgsl(
+            if with_uniform {
+                r#"
+                struct U { bg: vec3<f32>, inv_q: f32, width: f32, height: f32, f_px: f32, tiles_x: f32 };
+                @group(0) @binding(0) var<uniform> u: U;
+                @group(0) @binding(1) var<storage, read_write> acc: array<u32>;
+                @compute @workgroup_size(1)
+                fn main(@builtin(workgroup_id) wg: vec3<u32>) {
+                    if (wg.x == 0u) { acc[0] = 512000u + u32(u.width); }
+                }
+                "#.into()
+            } else {
+                r#"
+                @group(0) @binding(0) var<storage, read_write> acc: array<u32>;
+                @compute @workgroup_size(1)
+                fn main(@builtin(workgroup_id) wg: vec3<u32>) {
+                    if (wg.x == 0u) { acc[0] = 512000u; }
+                }
+                "#.into()
+            },
+        ),
+    });
+    let ubuf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("probe-uniform"),
+        size: 48,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut ub = [0u8; 48];
+    ub[20..24].copy_from_slice(&2560.0f32.to_le_bytes());
+    gpu.queue.write_buffer(&ubuf, 0, &ub);
+    let ro_storage = |binding: u32| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    let bgl = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("probe-bgl"),
+        entries: &(if with_uniform {
+            vec![
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                ro_storage(1),
+            ]
+        } else {
+            vec![ro_storage(0)]
+        }),
+    });
+    let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("probe-bg"),
+        layout: &bgl,
+        entries: &(if with_uniform {
+            vec![
+                wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: buf.as_entire_binding() },
+            ]
+        } else {
+            vec![wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() }]
+        }),
+    });
+    let layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("probe-layout"),
+        bind_group_layouts: &[Some(&bgl)],
+        immediate_size: 0,
+    });
+    let pipe = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("probe"),
+        layout: Some(&layout),
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut enc = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("probe"),
+            timestamp_writes: None,
+        });
+        cp.set_pipeline(&pipe);
+        cp.set_bind_group(0, &bg, &[]);
+        cp.dispatch_workgroups(1, 1, 1);
+    }
+    enc.copy_buffer_to_buffer(&buf, 0, &read, 0, 16);
+    gpu.queue.submit([enc.finish()]);
+    let slice = read.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+    let view = slice.get_mapped_range()?;
+    let v: &[u32] = bytemuck::cast_slice(&view);
+    println!("PROBE_COMPUTE value={} (expect 512000)", v[0]);
+    drop(view);
+    read.unmap();
+    Ok(())
 }

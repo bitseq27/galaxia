@@ -69,6 +69,22 @@ pub struct Cli {
     pub resident_cap: u32,
 
     /// Build-log session id stamped into measurements rows.
+    /// Star renderer: "billboard" (It.0/It.1 path) or "raster" (s009 §7.3
+    /// tile rasteriser, ADR-0002). Billboard stays default until the s009
+    /// gates pass, then is deleted in the same iteration.
+    #[arg(long, default_value = "billboard")]
+    pub star_renderer: String,
+
+    /// s009 shimmer harness: sub-pixel screen-space shift applied to the
+    /// projection (NDC translation), for temporal-stability comparisons.
+    #[arg(long, value_parser, default_value = "0,0")]
+    pub screen_shift_px: String,
+
+    /// Hidden s009 diagnostic: minimal compute-pass write + readback probe
+    /// (does compute execute at all on this backend?), then exit.
+    #[arg(long)]
+    pub probe_compute: bool,
+
     #[arg(long, default_value = "003")]
     pub session: String,
 
@@ -89,7 +105,7 @@ fn main() -> Result<()> {
 
     if cli.fly_test.is_some() {
         pollster::block_on(fly_test::run(&cli))
-    } else if cli.bench || cli.headless || cli.screenshot.is_some() {
+    } else if cli.bench || cli.headless || cli.screenshot.is_some() || cli.probe_compute {
         pollster::block_on(headless::run(&cli))
     } else {
         pollster::block_on(app_window::run(&cli))

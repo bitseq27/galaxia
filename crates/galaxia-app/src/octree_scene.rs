@@ -5,7 +5,8 @@ use galaxia_data::resident::{ResidentSet, StreamWorker};
 use galaxia_render::star_pass::StarGpu;
 use galaxia_render::StarPass;
 use glam::{DVec3, Vec4};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[allow(dead_code)] // evictions/desired surface in the It.6 governor overlay
 pub struct FrameStats {
@@ -40,6 +41,11 @@ pub struct OctreeScene {
     /// free list can actually fit them, instead of hot re-requesting.
     deferred: HashSet<u32>,
     free: Vec<(u32, u32)>, // free record ranges, sorted
+    /// s009: CPU mirror of resident leaf star records for the tile-rasteriser
+    /// binning pass (the GPU buffer is upload-only; binning runs on the CPU
+    /// in v1). Inserted on ingest, removed on eviction — same lifetime as
+    /// the resident slot.
+    mirror: HashMap<u32, Arc<Vec<StarGpu>>>,
     gpu_cap: u32,
     desired: Vec<u32>,
     ranges: Vec<(u32, u32)>,
@@ -66,6 +72,7 @@ impl OctreeScene {
             tree,
             worker,
             resident: ResidentSet::new(gpu_cap),
+            mirror: HashMap::new(),
             leaf_centers,
             inflight: HashSet::new(),
             deferred: HashSet::new(),
@@ -141,6 +148,7 @@ impl OctreeScene {
         for (l, slot) in evicted {
             self.release(slot.offset, slot.count);
             self.deferred.remove(&l);
+            self.mirror.remove(&l);
         }
         // Un-park deferred leaves once the free list can actually fit them
         // (checked after this frame's releases); drop ones no longer desired.
@@ -173,6 +181,7 @@ impl OctreeScene {
             let stars: &[StarGpu] = bytemuck::cast_slice(&bytes);
             if let Some(off) = self.alloc(count) {
                 star_pass.upload_at(queue, off, stars);
+                self.mirror.insert(leaf, Arc::new(stars.to_vec()));
                 self.resident.insert(
                     leaf,
                     galaxia_data::resident::Slot { offset: off, count },
@@ -205,6 +214,18 @@ impl OctreeScene {
             evictions: self.resident.evictions,
             mb_streamed: self.resident.bytes_streamed as f64 / 1e6,
             drawn,
+        }
+    }
+
+    /// s009: collect the resident+desired star records for CPU binning.
+    pub fn collect_stars(&self, out: &mut Vec<(DVec3, f32, [f32; 3])>) {
+        out.clear();
+        for &l in &self.desired {
+            if let Some(arc) = self.mirror.get(&l) {
+                for st in arc.iter() {
+                    out.push((DVec3::new(st.pos_pc[0] as f64, st.pos_pc[1] as f64, st.pos_pc[2] as f64), st.mag, st.color));
+                }
+            }
         }
     }
 
