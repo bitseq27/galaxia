@@ -1,10 +1,10 @@
 # docs/build/STATUS.yaml — THE RESUME FILE. Rewritten every session (PLAN §16.3.2).
 schema: 1
-updated: 2026-10-24T23:25:00+08:00
-session: 8
-commit: "4485b5a"
+updated: 2026-10-27T05:45:00+08:00
+session: 9
+commit: "daf0a04"
 iteration: 2
-iteration_name: "BEAUTIFUL — measurement hygiene (select_frame_ms, dual-criterion G2) + HDR chain landed with photometric parity"
+iteration_name: "BEAUTIFUL — HDR chain + §7.3 tile rasteriser v1 (flag-gated, gates passed on bright subset)"
 branch: main
 
 phase: prototype
@@ -18,6 +18,9 @@ working:
   - "frame-graph skeleton: 7 named pass slots with per-pass GPU timestamps; s007: DOUBLE-BUFFERED timer readback (2x query/resolve/read triples alternate; poll_results = PollType::Poll, never blocks; resolve skips only when BOTH sets airborne) — It.0 debt RETIRED, tests double_buffered_readback_never_skips_or_blocks"
   - "s008 measurement hygiene: select_frame_ms() pure predicate (GPU ts trusted only within [max(cpu*0.02,0.01), cpu*1.05+0.5] of the readback-synced wall) closes the s007 0.594 ms phantom class; 5 pinning tests; bench log carries frame_ms_source"
   - "s008 HDR CHAIN (ADR-0002 prerequisite): stars accumulate linear radiance in Rgba16Float (probe-gated; Rgba8Unorm fallback keeps the chain identical without headroom); tonemap pass (frame-graph slot 5, fullscreen triangle, exposure*clamp+sRGB OETF in-shader; LDR target/surface NON-srgb so no double encode; exposure moved out of stars.wgsl); windowed: non-srgb surface preference + per-resize HDR target + overlay in its own Load pass"
+  - "s009 §7.3 TILE RASTERISER v1 (--star-renderer=raster, billboard still default until s010 gates): CPU 8x8 tile binning (deterministic order), compute tile pass (1 thread/pixel over the tile star list), exact circle/rect analytic coverage, 2x2 sub-pixel profile quadrature, perspective-correct solid angle k=1/cos^3 (§7.3 MUST), Q14 u32 fixed-point accum with PLAIN per-pixel stores (pixel-owned => race-free+deterministic, ADR-0007), resolve into the s008 HDR target; wired headless+flytest+windowed; OctreeScene CPU mirror feeds t0 binning"
+  - "s009 RASTER GATES PASSED (bright subset): flux conservation <1% centre/corner/edge vs analytic integral; shimmer 0.45% vs billboard 0.65% (raster wins, post-quadrature); parity vs s008 HDR golden mean-d 0.074 / changed 0.79% (inside tolerances); tests 38/38; clippy clean; golden shot 2026-10-26-iter2-s009-raster-orion-wide.png"
+  - "s009 --screen-shift-px X,Y harness flag (sub-pixel NDC translation) for shimmer measurement; --probe-compute hidden diagnostic (minimal compute write/readback — the UBO-zero probe)"
   - "HDR PHOTOMETRIC PARITY vs LDR goldens: orion_wide mean-d 0.0017/255 (max 2), t0@1.5M 0.0213 (max 3), changed(>8) 0.000% — float16 rounding only; gate tolerances (mean-d<=1.0, changed<=2%) PASS with margin; lit-count threshold-sensitivity noted (faint px +-1-3/255)"
   - "fly-test G2 dual criterion (s008): wall <=2 s (target form) OR settle_frames <=3 (host-rate-independent stream health); measured necessity: at 1.2 fps the wall form is raster-bound and flaky (0.8 s PASS vs >2 s FAIL on identical streaming); both forms reported"
   - "WGSL hot-reload watcher with naga validate-before-swap (windowed path)"
@@ -33,7 +36,9 @@ working:
   - "wedge quadrant spread on recoloured shots: 0.0047 @1.5M / 0.0065 @3M; 1.5M/3M lit ratio 86.7%; recolour visual delta vs crude: 0.37-0.39% px (blue desaturation, geometry untouched)"
 
 not_working:
-  - "The §7.3 RASTERISER ITSELF not started: binning + tile shader = s009 (HDR prerequisite now landed)"
+  - "RASTER t0 GATES NOT YET RUN (fly-test both caps + t0 parity/shimmer on 1.5M/3M resident): etl/build lost to the turn reset; needs the ~2 h exact-tiling re-fetch first = s010 step 1; billboard deletion + default flip wait for those gates (ADR-0002 same-iteration rule)"
+  - "raster on llvmpipe is 3.1x the billboard frame cost (compute-loop quadrature on software raster) — correctness evidence only (ADR-0010); Titan compute-tile parallelism unmeasured"
+  - "wgpu30-GLES COMPUTE READS UNIFORM BUFFERS AS ZERO (probe-evidenced, s009): scalars must ride storage array<f32>; keep --probe-compute in the toolbox for future 'compute silently does nothing' episodes"
   - "llvmpipe HDR tax: Rgba16Float fullscreen ~3-4x 8bit on software raster (orion_wide 183.5 ms @1440p vs 29.0 @720p vs 39-60 pre-HDR LDR); stream-bound scenes unaffected; Titan has native float — sandbox != perf (ADR-0010); DO NOT chase on sandbox"
   - "0.594 ms phantom: class CLOSED by select_frame_ms (s008 step 0); exact one-off trigger never reproduced (~15 attempts) — predicate + tests make the class impossible in measurements rows"
   - "80/200 bright no-plx stars unresolved (SIMBAD data-less); bulk VIZIER/Hipparcos = target-machine"
@@ -45,28 +50,27 @@ not_working:
   - "NOTE (s005): 'Rigel G=2.08' in old notes is Saiph; DR3 Rigel has plx 3.235 mas"
 
 next_action: |
-  Session 009 — the §7.3 RASTERISER (ADR-0002 steps 2-3; HDR prerequisite
-  landed in s008):
-  1) Probe float-atomic availability on both backends (wgpu features /
-     llvmpipe GLES): if unavailable on the target-relevant path, write
-     ADR-0007 (per-tile u32 fixed-point + frame-global normalisation) BEFORE
-     coding the accumulator; if available on Vulkan, accumulate f32 there and
-     keep the u32 path only where needed.
-  2) Tile binning pass: 8x8 screen tiles; per-tile star lists from the culled
-     set (CPU-side binning is fine on llvmpipe; structure it so a compute
-     binning pass can replace it on the target). Deterministic order.
-  3) Tile rasteriser compute/shader pass: analytic disc-pixel overlap coverage
-     (no shimmer), perspective-correct solid angle ([MUST]: wide-FOV edge
-     stars proportionally brighter), depth test against a half-res prepass,
-     accumulate RADIANCE into the s008 HDR target (tonemap unchanged).
-  Gates: (a) photometric unit test — single-star flux on target vs analytic
-     solid angle <1% error, centre and extreme-FOV cases; (b) golden-shot
-     parity vs the s008 HDR billboard shots within the s008 tolerances
-     (mean-d <=1.0/255, changed(>8) <=2%); (c) shimmer test: sub-pixel camera
-     drift sequence, per-pixel variance vs billboard path (the rasteriser must
-     win); (d) fly-test + tests + clippy green. ONLY then delete the billboard
-     path in the same iteration (ADR-0002). Screenshot every step; record
-     llvmpipe costs with the 16f-tax note in mind.
+  Session 010 — FINISH THE RASTERISER SWAP (ADR-0002 close-out):
+  1) Re-fetch T0 with etl/fetch_cone_exact.py (etl/build lost to the reset;
+     ~2 h in --deadline chunks; gate sum == 15,573,949 again) -> bake_literature_bin
+     -> octree_build (expect 11,029,150 / 403 / 471 as in s007-s008).
+  2) Run the RASTER gates on t0: --fly-test 60,50 at 1.5M and 3M caps with
+     --star-renderer raster (both must PASS, dual-criterion G2); t0 parity
+     shot vs the s008 HDR t0 golden within tolerances; t0 shimmer sequence
+     vs billboard (raster must win); benches both renderers (record, do not
+     chase on llvmpipe).
+  3) If 2 is green: FLIP the default to raster and DELETE the billboard path
+     in the same iteration (ADR-0002): remove star_pass pipeline + CORNERS +
+     fs profile (keep StarGpu upload format = RasterStar input? decide: the
+     raster consumes CPU bins, so the GPU star buffer goes too), update
+     frame-graph slots (stars -> disabled, star_raster_sw -> enabled),
+     re-run the FULL gate suite (tests/clippy/fly both caps/shots/parity),
+     rewrite the s008 tolerances into a raster-vs-raster golden regime
+     (new goldens become the reference).
+  4) Half-res depth prepass hook (§7.3): add the prepass pass slot + texture
+     with trivial content (cleared 1.0) and the raster depth-test sampling
+     it, so It.4/It.5 objects plug in without raster changes.
+  Record everything; ADR-0002 consequences updated (billboard deleted).
 
 next_iteration: 2
 next_iteration_scope: |
@@ -84,7 +88,8 @@ measurements_latest:
   volumetrics_ms: null                  # budget 2.2 — It.4
   glare_ms: null                        # budget 1.5 — It.2
   fsr2_ms: null                         # budget 1.2 — It.2
-  frame_ms_orion_wide: 190.8            # HDR chain quiet median this slow host (LDR was 59.3; the delta is the llvmpipe 16f fullscreen tax, not code)
+  frame_ms_orion_wide: 190.8            # HDR billboard chain, this slow host
+  frame_ms_orion_wide_raster: 596.6     # raster path on llvmpipe (correctness-only number, ADR-0010)
   fps_orion_wide: 17
   frame_ms_t0_orion_m13: 430.0          # warm median-of-5 @1.5M cap, recoloured T0, this host (s007 host: 215-227)
   flytest_gate: "PASS at 1.5M and 3M caps on the HDR chain (s008): G1 1.063M/1.528M; G2 0.593/0.887 s AND settle_frames=1 (dual criterion since s008)"
@@ -96,6 +101,7 @@ measurements_latest:
   noplx_skiprate_curve: "~0% <G13 -> 24.8% G19-20 (s005 sample); far_cap ~2.46M"
   literature_resolved: "120/200 (80 listed unresolvable)"
   hh_colour_gate: "dE2000 < 3 on 20 reference stars, measured ~0 (s007); recolour visual delta 0.37-0.39% px"
+  raster_gates: "flux <1% across FOV; shimmer 0.45% vs billboard 0.65%; parity mean-d 0.074/changed 0.79% (s009, bright subset); t0 gates pending s010"
 
 environment:
   gpu: "llvmpipe (LLVM 15.0.6, 256 bits) software raster — sandbox; TARGET is TITAN RTX/Vulkan"
