@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================================
-rem  PROJECT MILKY WAY (galaxia) — Windows launcher (target: TITAN RTX/Vulkan)
+rem  PROJECT MILKY WAY (galaxia) - Windows launcher (target: TITAN RTX/Vulkan)
 rem
 rem  Usage:
 rem    launch.bat                 auto scene: t0_orion_m13 if the baked T0
@@ -23,7 +23,7 @@ rem    python etl\bake_literature_bin.py
 rem    python etl\octree_build.py
 rem  Needs python with numpy + healpy on PATH.
 rem ============================================================================
-setlocal enabledelayedexpansion
+setlocal enableextensions
 cd /d "%~dp0"
 
 set "SCENE=%~1"
@@ -49,7 +49,7 @@ set "T0OK=1"
 if not exist "etl\build\t0\tree_meta.json" set "T0OK=0"
 if "%T0OK%"=="0" (
     if /i "%SCENE:~0,2%"=="t0" (
-        echo [launch] NOTE: baked T0 octree not found at etl\build\t0\ —
+        echo [launch] NOTE: baked T0 octree not found at etl\build\t0\ -
         echo          t0_* scenes need it. Falling back to orion_wide.
         echo          One-time prep:  python etl\fetch_cone_exact.py
         echo                        python etl\bake_literature_bin.py
