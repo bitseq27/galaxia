@@ -29,19 +29,21 @@ title PROJECT MILKY WAY - galaxia launcher
 set "SCENE=%~1"
 set "PROFILE=%~2"
 if not defined PROFILE set "PROFILE=release"
+set "BUILDARGS=--release -p galaxia-app"
 if /i "%PROFILE%"=="debug" set "BUILDARGS=-p galaxia-app"
-if /i not "%PROFILE%"=="debug" set "BUILDARGS=--release -p galaxia-app"
+echo [launch] args: %*
 
 where cargo >nul 2>&1 || goto :nocargo
 
-rem --- scene auto-pick when no argument --------------------------------------
-if defined SCENE goto :scene_set
-for %%s in (orion_wide orion_belt betelgeuse pleiades t0_orion_m13) do if /i "%SCENE%"=="%%s" goto :scene_ok
-goto :badscene
-:scene_ok
+rem --- scene auto-pick when no argument. Plain lines only, no blocks. -------
+if not "%SCENE%"=="" goto :scene_set
 if exist "etl\build\t0\tree_meta.json" set "SCENE=t0_orion_m13"
-if not exist "etl\build\t0\tree_meta.json" set "SCENE=orion_wide"
+if not "%SCENE%"=="" goto :scene_set
+set "SCENE=orion_wide"
 :scene_set
+echo [launch] scene resolved to: %SCENE%
+
+rem --- scene whitelist -------------------------------------------------------
 for %%s in (orion_wide orion_belt betelgeuse pleiades t0_orion_m13) do if /i "%SCENE%"=="%%s" goto :scene_ok
 goto :badscene
 :scene_ok
@@ -56,16 +58,10 @@ set "BIN=target\%PROFILE%\galaxia.exe"
 if exist "%BIN%" goto :run
 echo [launch] First run: building the %PROFILE% profile with default features,
 echo          i.e. Vulkan on Windows per ADR-0010. This takes several minutes.
-cargo build %BUILDARGS% || goto :badscene
-echo [launch] ERROR: unknown scene "%SCENE%".
-echo          Valid: orion_wide, orion_belt, betelgeuse, pleiades, t0_orion_m13
-pause
-exit /b 1
-
-:buildfail
+cargo build %BUILDARGS% || goto :buildfail
 
 :run
-echo [launch] scene=%SCENE% profile=%PROFILE% bin=%BIN%
+echo [launch] starting scene=%SCENE% profile=%PROFILE%
 "%BIN%" --scene "%SCENE%"
 if errorlevel 1 goto :appfail
 goto :eof
